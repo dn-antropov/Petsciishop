@@ -33,7 +33,7 @@ Petsciishop would not exist without the incredible work of the C64 community and
 - **[PETSCII Editor](https://petscii.krissz.hu/)** by Krissz — a great web-based PETSCII editor that inspired many of our features
 - **[c64-image-to-petscii](https://github.com/mkeke/c64-image-to-petscii)** by mkeke — the image converter algorithm we built upon
 - **[CBM prg Studio](https://www.ajordison.co.uk/)** by Arthur Jordison — creator of the SDD file format we use for interoperability
-- **[Colodore](http://www.pepto.de/projects/colorvic/)** palette by Philip "Pepto" Timmermann — the most accurate modern C64 color reference
+- **[Colodore](http://www.pepto.de/projects/colorvic/)** palette by Philip "Pepto" Timmermann — we support all major C64 palettes found across emulators and tools, but Colodore is the gold standard and our default: the most accurate, mathematically derived C64 color reference available
 - The entire **Commodore 64 demoscene and PETSCII art community** — for keeping this art form alive and thriving for over 40 years
 
 ## Contributing
