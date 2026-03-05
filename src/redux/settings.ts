@@ -1,0 +1,167 @@
+
+import { Action } from 'redux'
+import { ThunkAction } from 'redux-thunk';
+
+import {
+  Settings as RSettings,
+  EditSaved,
+  EditBranch,
+  PaletteName,
+  CrtFilter,
+  RootState,
+  SettingsJson
+} from './types'
+import { ActionsUnion, DispatchPropsFromActions, createAction } from './typeUtils'
+
+import * as fp from '../utils/fp'
+
+const LOAD = 'LOAD'
+const SAVE_EDITS = 'SAVE_EDITS'
+const CANCEL_EDITS = 'CANCEL_EDITS'
+const SET_SELECTED_COLOR_PALETTE = 'SET_SELECTED_COLOR_PALETTE'
+const SET_INTEGER_SCALE = 'SET_INTEGER_SCALE'
+const SET_CRT_FILTER = 'SET_CRT_FILTER'
+
+//const CONFIG_FILE_VERSION = 1
+
+const initialState: RSettings = {
+  selectedColorPalette: 'colodore',
+  integerScale: false,
+  crtFilter: 'none' as CrtFilter
+}
+
+const SETTINGS_KEY = 'petsciishop-settings';
+
+function saveSettings(settings: RSettings) {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch(e) {
+    console.error('Failed to save settings:', e);
+  }
+}
+
+/** Migrate legacy palette names to canonical c64Palettes ids. */
+function normalizePaletteId(name: string): string {
+  if (name === 'pepto') return 'pepto-pal';
+  return name;
+}
+
+// Load settings from a JSON doc.  Handle version upgrades.
+function fromJson(json: SettingsJson): RSettings {
+  let version = undefined
+  if (json.version === undefined || json.version === 1) {
+    version = 1
+  }
+  if (version !== 1) {
+    console.error('TODO upgrade settings format!')
+  }
+  const init = initialState
+  return {
+    selectedColorPalette: json.selectedColorPalette === undefined ? init.selectedColorPalette : normalizePaletteId(json.selectedColorPalette),
+    integerScale: fp.maybeDefault(json.integerScale, false),
+    crtFilter: fp.maybeDefault(json.crtFilter, 'none')
+  }
+}
+
+function saveEdits (): ThunkAction<void, RootState, undefined, Action> {
+  return (dispatch, _getState) => {
+    dispatch(actions.saveEditsAction());
+    dispatch((_dispatch, getState) => {
+      const state = getState().settings
+      saveSettings(state.saved)
+    })
+  }
+}
+
+interface BranchArgs {
+  branch: EditBranch;
+}
+
+interface SetSelectedColorPaletteNameArgs extends BranchArgs {
+  name: PaletteName;
+}
+
+interface SetIntegerScaleArgs extends BranchArgs {
+  scale: boolean;
+}
+
+interface SetCrtFilterArgs extends BranchArgs {
+  crtFilter: CrtFilter;
+}
+
+const actionCreators = {
+  load: (data: SettingsJson) => createAction(LOAD, fromJson(data)),
+  saveEditsAction: () => createAction(SAVE_EDITS),
+  cancelEdits: () => createAction(CANCEL_EDITS),
+  setSelectedColorPaletteName: (data: SetSelectedColorPaletteNameArgs) => createAction(SET_SELECTED_COLOR_PALETTE, data),
+  setIntegerScale: (data: SetIntegerScaleArgs) => createAction(SET_INTEGER_SCALE, data),
+  setCrtFilter: (data: SetCrtFilterArgs) => createAction(SET_CRT_FILTER, data)
+};
+
+type Actions = ActionsUnion<typeof actionCreators>
+
+export const actions = {
+  ...actionCreators,
+  saveEdits,
+};
+
+export type PropsFromDispatch = DispatchPropsFromActions<typeof actions>;
+
+function updateBranch(
+  state:  EditSaved<RSettings>,
+  branch: EditBranch,
+  field:  Partial<RSettings>
+): EditSaved<RSettings> {
+  const s: RSettings = state[branch];
+  return {
+    ...state,
+    [branch]: {
+      ...s,
+      ...field
+    }
+  }
+}
+
+export function reducer(
+  state: EditSaved<RSettings> = {
+    editing: initialState, // form state while editing
+    saved: initialState    // final state for rest of UI and persistence
+  },
+  action: Actions
+): EditSaved<RSettings> {
+  switch (action.type) {
+    case LOAD:
+      let newSaved = action.data
+      return {
+        saved: newSaved,
+        editing: newSaved
+      }
+    case SAVE_EDITS:
+      return {
+        ...state,
+        saved: state.editing
+      }
+    case CANCEL_EDITS:
+      return {
+        ...state,
+        editing: state.saved
+      }
+    case SET_INTEGER_SCALE: {
+      return updateBranch(state, action.data.branch, {
+        integerScale: action.data.scale
+      });
+    }
+    case SET_SELECTED_COLOR_PALETTE: {
+      return updateBranch(state, action.data.branch, {
+        selectedColorPalette: action.data.name
+      });
+    }
+    case SET_CRT_FILTER: {
+      return updateBranch(state, action.data.branch, {
+        crtFilter: action.data.crtFilter
+      });
+    }
+    default:
+      return state;
+  }
+}

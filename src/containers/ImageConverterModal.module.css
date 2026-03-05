@@ -1,0 +1,302 @@
+.container {
+  color: #ddd;
+}
+
+.title {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.topRow {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.dropZoneWrapper {
+  width: 320px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.dropZoneHeading {
+  font-size: 12px;
+  color: #999;
+  margin-top: 4px;
+  text-align: center;
+}
+
+.dropZone {
+  aspect-ratio: 320 / 200;
+  border: 2px dashed rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1a1a1a;
+  overflow: hidden;
+}
+
+.dropZone:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.dropZoneHasImage {
+  border-style: solid;
+  border-color: #555;
+}
+
+.dropZoneHasImage:hover {
+  border-color: #888;
+}
+
+.dropZoneImage {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.settings {
+  width: 340px;
+  flex-shrink: 0;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 10px 12px;
+}
+
+.settings legend {
+  font-size: 12px;
+  color: #999;
+  padding: 0 6px;
+}
+
+.settingsRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.settingsRow label {
+  width: 100px;
+  text-align: right;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.settingsRow input[type="range"] {
+  flex: 1;
+}
+
+.settingsRow select {
+  flex: 1;
+  background: #444;
+  color: #ddd;
+  border: 1px solid #666;
+  border-radius: 3px;
+  padding: 2px 4px;
+}
+
+.value {
+  width: 36px;
+  text-align: right;
+  font-size: 13px;
+  font-family: monospace;
+}
+
+.bgPanel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 10px 12px;
+  align-self: flex-start;
+}
+
+.bgPanel legend {
+  font-size: 12px;
+  color: #999;
+  padding: 0 6px;
+}
+
+.bgPanelLabel {
+  font-size: 11px;
+  color: #999;
+  margin-bottom: 4px;
+}
+
+.paletteSelect {
+  width: 100%;
+  background: #444;
+  color: #ddd;
+  border: 1px solid #666;
+  border-radius: 3px;
+  padding: 2px 4px;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.bgSwatches {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 20px));
+  gap: 2px;
+  width: max-content;
+}
+
+.bgSwatches button {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.bgAuto {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 24px;
+  background: #555;
+  color: #ddd;
+  border: 2px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.bgAuto.active {
+  border-color: #fff;
+}
+
+.bgSwatch {
+  width: 20px;
+  height: 20px;
+  border: 2px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.bgSwatch.active {
+  border-color: #fff;
+}
+
+.progressContainer {
+  margin-bottom: 12px;
+}
+
+.progressLabel {
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.progressBar {
+  height: 8px;
+  background: #444;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: #6c9;
+  transition: width 0.2s;
+}
+
+.previewsHeader {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+
+.gridToggle {
+  font-size: 12px;
+  padding: 3px 10px;
+  background: #444;
+  color: #aaa;
+  border: 1px solid #666;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.gridToggle:hover {
+  background: #555;
+}
+
+.gridToggleOn {
+  background: #336;
+  color: #aaf;
+  border-color: #66a;
+}
+
+.gridToggleOn:hover {
+  background: #447;
+}
+
+.previews {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+  justify-content: center;
+}
+
+.previewPanel {
+  width: 320px;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.previewPanel h4 {
+  margin: 0 0 6px 0;
+  font-size: 13px;
+}
+
+.previewCanvas {
+  width: 100%;
+  max-width: 320px;
+  image-rendering: pixelated;
+  border: 1px solid #555;
+}
+
+.importBtn {
+  margin-top: 6px;
+  padding: 6px 16px;
+  background: #4a7;
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.importBtn:hover {
+  background: #5b8;
+}
+
+.ecmNote {
+  font-size: 11px;
+  color: #999;
+  margin-top: 4px;
+}
+
+.footer {
+  text-align: right;
+}
+
+.closeBtn {
+  padding: 6px 20px;
+  background: #555;
+  color: #ddd;
+  border: 1px solid #666;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.closeBtn:hover {
+  background: #666;
+}

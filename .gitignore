@@ -1,0 +1,17 @@
+/build/
+/dist/
+/docs/_site
+**/.DS_Store
+/node_modules/
+/yarn-error.log
+
+# AI tool configs
+.claude/
+.gemini/
+.opencode/
+.github/prompts/.vscode
+openspec/
+CLAUDE.md
+
+AGENTS.md
+resources/
