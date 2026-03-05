@@ -31,7 +31,6 @@ Petsciishop would not exist without the incredible work of the C64 community and
 
 - **[Petmate](https://github.com/nurpax/petmate)** by Janne Hellsten — the original foundation this project was built on
 - **[PETSCII Editor](https://petscii.krissz.hu/)** by Krissz — a great web-based PETSCII editor that inspired many of our features
-- **[Image-to-PETSCII](https://lysebo.xyz/tools/image-to-petscii/)** by lysebo — inspiration for the image converter approach
 - **[c64-image-to-petscii](https://github.com/mkeke/c64-image-to-petscii)** by mkeke — the image converter algorithm we built upon
 - **[CBM prg Studio](https://www.ajordison.co.uk/)** by Arthur Jordison — creator of the SDD file format we use for interoperability
 - **[Colodore](http://www.pepto.de/projects/colorvic/)** palette by Philip "Pepto" Timmermann — the most accurate modern C64 color reference
