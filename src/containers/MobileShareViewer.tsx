@@ -280,6 +280,7 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
         <p className={s.subtitle}>Read-only mobile viewer</p>
       </div>
       <div className={s.controls}>
+        <span className={s.controlsLabel}>Palette</span>
         <select className={s.select} value={paletteId} onChange={e => setPaletteId(e.target.value)}>
           {C64_PALETTES.map(p => (
             <option key={p.id} value={p.id}>{p.name}</option>
