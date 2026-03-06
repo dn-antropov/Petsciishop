@@ -292,7 +292,7 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
         />
       </div>
       <div className={s.meta}>
-        40x25 · {mode}
+        File: {screenName} · 40x25 · {mode}
       </div>
       <p className={s.about}>PETSCII art is old-school 8-bit graphics from the Commodore 64 — 40x25 characters, 16 colors, made entirely with the keyboard. No pixels, just characters.</p>
       <p className={s.notice}>Mobile viewer only. Open this link on a desktop browser to use the full editor.</p>
