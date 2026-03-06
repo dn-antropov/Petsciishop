@@ -258,7 +258,7 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
   }
 
   const mode = framebuf.mcmMode ? 'MCM' : framebuf.ecmMode ? 'ECM' : 'Standard';
-  const screenName = framebuf.name && framebuf.name.trim() ? framebuf.name.trim() : 'Shared Screen';
+  const screenName = framebuf.metadata?.name?.trim() || 'Shared Screen';
   // In fullscreen, compute canvas size to fill viewport while preserving aspect ratio
   const canvasStyle = useMemo(() => {
     if (!isFullscreen) return undefined;

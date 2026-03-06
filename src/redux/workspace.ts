@@ -27,7 +27,12 @@ export function framebufFromJson(c: any): Framebuf {
     borderColor: c.borderColor,
     framebuf: c.framebuf,
     charset: fp.maybeDefault(c.charset, 'upper'),
-    name: fp.maybeDefault(c.name, undefined),
+    metadata: {
+      name: fp.maybeDefault(c.metadata?.name ?? c.name, undefined),
+      author: c.metadata?.author ?? c.author ?? undefined,
+      date: c.metadata?.date ?? c.date ?? undefined,
+      description: c.metadata?.description ?? c.description ?? undefined,
+    },
     ecmMode: c.ecmMode ?? undefined,
     extBgColor1: c.extBgColor1 ?? undefined,
     extBgColor2: c.extBgColor2 ?? undefined,

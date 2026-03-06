@@ -3,12 +3,13 @@ import { Framebuf } from '../redux/types';
 import { CHARSET_LOWER, CHARSET_UPPER } from '../redux/editor';
 
 const SHARE_PREFIX = '#/v/';
-const VERSION = 1;
+const VERSION = 2;
 const WIDTH = 40;
 const HEIGHT = 25;
 const CELL_COUNT = WIDTH * HEIGHT;
 const PACKED_COLOR_BYTES = CELL_COUNT / 2;
 const MAX_NAME_BYTES = 64;
+const MAX_METADATA_BYTES = 128;
 const MAX_HASH_PAYLOAD_CHARS = 4096;
 const MAX_INFLATED_BYTES = 4096;
 
@@ -84,22 +85,73 @@ export function encodePSS1(fb: Framebuf): Uint8Array {
   validateFramebufForShare(fb);
 
   const mode = colorModeBits(fb);
-  const hasName = !!fb.name;
   const charsetBit = fb.charset === CHARSET_LOWER ? 1 : 0;
-  const nameBytes = hasName ? new TextEncoder().encode(fb.name) : new Uint8Array();
-  if (nameBytes.length > MAX_NAME_BYTES) {
-    throw new Error(`Screen name too long: max ${MAX_NAME_BYTES} bytes`);
+
+  // Metadata block
+  const hasMetadata = !!(fb.metadata?.name || fb.metadata?.author || fb.metadata?.date || fb.metadata?.description);
+
+  // Build metadata block separately to check budget
+  let metadataBytes: Uint8Array | null = null;
+  if (hasMetadata) {
+    const enc = new TextEncoder();
+    const nameBytes = fb.metadata?.name ? enc.encode(fb.metadata.name) : new Uint8Array();
+    const authorBytes = fb.metadata?.author ? enc.encode(fb.metadata.author) : new Uint8Array();
+    const noteBytes = fb.metadata?.description ? enc.encode(fb.metadata.description) : new Uint8Array();
+    const hasDate = !!fb.metadata?.date;
+
+    // flags byte: bit 0=name, bit 1=author, bit 2=date, bit 3=description
+    let flags = 0;
+    if (nameBytes.length > 0) flags |= 0x01;
+    if (authorBytes.length > 0) flags |= 0x02;
+    if (hasDate) flags |= 0x04;
+    if (noteBytes.length > 0) flags |= 0x08;
+
+    // Calculate total metadata size
+    let metaSize = 1; // flags byte
+    if (nameBytes.length > 0) metaSize += 1 + nameBytes.length;
+    if (authorBytes.length > 0) metaSize += 1 + authorBytes.length;
+    if (hasDate) metaSize += 3;
+    if (noteBytes.length > 0) metaSize += 1 + noteBytes.length;
+
+    if (metaSize > MAX_METADATA_BYTES) {
+      throw new Error(`Metadata too large: ${metaSize} bytes (max ${MAX_METADATA_BYTES})`);
+    }
+
+    metadataBytes = new Uint8Array(metaSize);
+    let mPtr = 0;
+    metadataBytes[mPtr++] = flags;
+    if (nameBytes.length > 0) {
+      metadataBytes[mPtr++] = nameBytes.length;
+      metadataBytes.set(nameBytes, mPtr);
+      mPtr += nameBytes.length;
+    }
+    if (authorBytes.length > 0) {
+      metadataBytes[mPtr++] = authorBytes.length;
+      metadataBytes.set(authorBytes, mPtr);
+      mPtr += authorBytes.length;
+    }
+    if (hasDate) {
+      const [y, m, d] = fb.metadata!.date!.split('-').map(Number);
+      metadataBytes[mPtr++] = y - 2000;
+      metadataBytes[mPtr++] = m;
+      metadataBytes[mPtr++] = d;
+    }
+    if (noteBytes.length > 0) {
+      metadataBytes[mPtr++] = noteBytes.length;
+      metadataBytes.set(noteBytes, mPtr);
+      mPtr += noteBytes.length;
+    }
   }
 
   const headerSize =
     2 +
     (mode === 1 ? 1 : 0) +
     (mode === 2 ? 2 : 0) +
-    (hasName ? 1 + nameBytes.length : 0);
+    (hasMetadata && metadataBytes ? metadataBytes.length : 0);
   const payload = new Uint8Array(headerSize + CELL_COUNT + PACKED_COLOR_BYTES);
 
   let ptr = 0;
-  payload[ptr++] = ((VERSION & 0x0f) << 4) | ((mode & 0x03) << 2) | ((charsetBit & 0x01) << 1) | (hasName ? 1 : 0);
+  payload[ptr++] = ((VERSION & 0x0f) << 4) | ((mode & 0x03) << 2) | ((charsetBit & 0x01) << 1) | (hasMetadata ? 1 : 0);
   payload[ptr++] = (requireNibble(fb.backgroundColor, 'background color') << 4) | requireNibble(fb.borderColor, 'border color');
 
   if (mode === 1) {
@@ -109,10 +161,9 @@ export function encodePSS1(fb: Framebuf): Uint8Array {
     payload[ptr++] = (requireNibble(fb.extBgColor3 ?? 0, 'ECM background 3') << 4);
   }
 
-  if (hasName) {
-    payload[ptr++] = nameBytes.length;
-    payload.set(nameBytes, ptr);
-    ptr += nameBytes.length;
+  if (hasMetadata && metadataBytes) {
+    payload.set(metadataBytes, ptr);
+    ptr += metadataBytes.length;
   }
 
   for (let row = 0; row < HEIGHT; row++) {
@@ -149,8 +200,8 @@ export function decodePSS1(compressed: Uint8Array): Framebuf {
   const version = (header >> 4) & 0x0f;
   const mode = (header >> 2) & 0x03;
   const charsetBit = (header >> 1) & 0x01;
-  const hasName = (header & 0x01) === 1;
-  if (version !== VERSION) {
+  const hasMetadataOrName = (header & 0x01) === 1;
+  if (version !== 1 && version !== 2) {
     throw new Error(`Unsupported PSS version: ${version}`);
   }
   if (mode !== 0 && mode !== 1 && mode !== 2) {
@@ -181,15 +232,63 @@ export function decodePSS1(compressed: Uint8Array): Framebuf {
     extBgColor3 = (ecm3 >> 4) & 0x0f;
   }
 
-  let name: string | undefined;
-  if (hasName) {
-    if (ptr >= inflated.length) throw new Error('Malformed payload.');
-    const nameLength = inflated[ptr++];
-    if (nameLength > MAX_NAME_BYTES || ptr + nameLength > inflated.length) {
-      throw new Error('Invalid name field.');
+  let metadata: { name?: string; author?: string; date?: string; description?: string } | undefined;
+
+  if (version === 1) {
+    // v1: hasName flag in bit 0
+    if (hasMetadataOrName) {
+      if (ptr >= inflated.length) throw new Error('Malformed payload.');
+      const nameLength = inflated[ptr++];
+      if (nameLength > 64 || ptr + nameLength > inflated.length) {
+        throw new Error('Invalid name field.');
+      }
+      const name = new TextDecoder().decode(inflated.subarray(ptr, ptr + nameLength));
+      ptr += nameLength;
+      metadata = { name };
     }
-    name = new TextDecoder().decode(inflated.subarray(ptr, ptr + nameLength));
-    ptr += nameLength;
+  } else {
+    // v2: hasMetadata flag in bit 0
+    if (hasMetadataOrName) {
+      if (ptr >= inflated.length) throw new Error('Malformed payload.');
+      const flags = inflated[ptr++];
+      const dec = new TextDecoder();
+
+      let name: string | undefined;
+      let author: string | undefined;
+      let date: string | undefined;
+      let description: string | undefined;
+
+      if (flags & 0x01) {
+        if (ptr >= inflated.length) throw new Error('Malformed metadata.');
+        const len = inflated[ptr++];
+        if (ptr + len > inflated.length) throw new Error('Malformed metadata.');
+        name = dec.decode(inflated.subarray(ptr, ptr + len));
+        ptr += len;
+      }
+      if (flags & 0x02) {
+        if (ptr >= inflated.length) throw new Error('Malformed metadata.');
+        const len = inflated[ptr++];
+        if (ptr + len > inflated.length) throw new Error('Malformed metadata.');
+        author = dec.decode(inflated.subarray(ptr, ptr + len));
+        ptr += len;
+      }
+      if (flags & 0x04) {
+        if (ptr + 3 > inflated.length) throw new Error('Malformed metadata.');
+        const yy = inflated[ptr++];
+        const mm = inflated[ptr++];
+        const dd = inflated[ptr++];
+        date = `${(2000 + yy).toString().padStart(4, '0')}-${mm.toString().padStart(2, '0')}-${dd.toString().padStart(2, '0')}`;
+      }
+      if (flags & 0x08) {
+        if (ptr >= inflated.length) throw new Error('Malformed metadata.');
+        const len = inflated[ptr++];
+        if (ptr + len > inflated.length) throw new Error('Malformed metadata.');
+        description = dec.decode(inflated.subarray(ptr, ptr + len));
+        ptr += len;
+      }
+
+      metadata = { name, author, date, description };
+    }
   }
 
   const remaining = inflated.length - ptr;
@@ -226,7 +325,7 @@ export function decodePSS1(compressed: Uint8Array): Framebuf {
     backgroundColor,
     borderColor,
     charset: charsetBit ? CHARSET_LOWER : CHARSET_UPPER,
-    name,
+    metadata,
     ...toColorModeFlags(mode),
     extBgColor1,
     extBgColor2,

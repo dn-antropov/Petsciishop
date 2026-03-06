@@ -149,7 +149,8 @@ function maybeLabelName(name: string | undefined) {
 }
 
 function convertToAsm(lines: string[], fb: FramebufWithFont, hex: boolean) {
-  const { width, height, framebuf, backgroundColor, borderColor, name } = fb;
+  const { width, height, framebuf, backgroundColor, borderColor } = fb;
+  const name = fb.metadata?.name;
 
   lines.push(`${maybeLabelName(name)}:`);
 
@@ -204,7 +205,7 @@ export function genAsm(fbs: FramebufWithFont[], fmt: FileFormatAsm) {
   }
   let backgroundColor = selectedFb.backgroundColor;
   let borderColor = selectedFb.borderColor;
-  const label = maybeLabelName(selectedFb.name);
+  const label = maybeLabelName(selectedFb.metadata?.name);
   let charsetBits;
   switch(selectedFb.charset) {
     case 'upper': charsetBits = "$15"; break;

@@ -23,6 +23,13 @@ export interface Font {
   charOrder: number[];
 };
 
+export interface ScreenMetadata {
+  readonly name?: string;
+  readonly author?: string;
+  readonly date?: string;  // YYYY-MM-DD
+  readonly description?: string;
+}
+
 export interface Framebuf {
   readonly framebuf: Pixel[][];
   readonly width: number;
@@ -30,7 +37,7 @@ export interface Framebuf {
   readonly backgroundColor: number;
   readonly borderColor: number;
   readonly charset: string;
-  readonly name?: string;
+  readonly metadata?: ScreenMetadata;
   readonly ecmMode?: boolean;
   readonly extBgColor1?: number;  // $D022
   readonly extBgColor2?: number;  // $D023
@@ -134,6 +141,8 @@ export interface Toolbar {
   showExport: { show: boolean, fmt?: FileFormat}; // fmt undefined only when show=false
   showImport: { show: boolean, fmt?: FileFormat}; // fmt undefined only when show=false
   showImageConverter: boolean;
+  showScreenInfo: { show: boolean, framebufIndex?: number };
+  showResetConfirm: boolean;
   canvasGrid: boolean;
   previewGrid: boolean;
   showColorModeLabels: boolean;

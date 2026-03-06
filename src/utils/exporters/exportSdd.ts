@@ -15,7 +15,8 @@ function escapeXmlText(value: string): string {
 }
 
 export function saveSDD(fb: FramebufWithFont): string {
-  const { framebuf, width, height, backgroundColor, borderColor, name } = fb;
+  const { framebuf, width, height, backgroundColor, borderColor } = fb;
+  const name = fb.metadata?.name;
   const isEcm = fb.ecmMode;
   const isMcm = fb.mcmMode;
   const charset = fb.charset === 'lower' ? 'lower' : 'upper';
@@ -57,7 +58,16 @@ export function saveSDD(fb: FramebufWithFont): string {
     lines.push(`            <RowData>${cells.join(',')}</RowData>`);
   }
 
-  lines.push(`            <Description>${escapeXmlText(name ?? 'Screen')}</Description>`);
+  lines.push(`            <Name>${escapeXmlText(name ?? 'Screen')}</Name>`);
+  if (fb.metadata?.author) {
+    lines.push(`            <Author>${escapeXmlText(fb.metadata.author)}</Author>`);
+  }
+  if (fb.metadata?.date) {
+    lines.push(`            <Date>${escapeXmlText(fb.metadata.date)}</Date>`);
+  }
+  if (fb.metadata?.description) {
+    lines.push(`            <Description>${escapeXmlText(fb.metadata.description)}</Description>`);
+  }
   if (fb.paletteId) {
     lines.push(`            <PaletteId>${fb.paletteId}</PaletteId>`);
   }

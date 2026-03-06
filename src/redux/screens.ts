@@ -80,7 +80,7 @@ function cloneScreen(index: number): ThunkAction<void, RootState, undefined, Act
       const newFramebufIdx = getScreens(state)[newScreenIdx]
       dispatch(Framebuffer.actions.copyFramebuf({
         ...framebuf,
-        name: makeScreenName(newFramebufIdx)
+        metadata: { ...framebuf.metadata, name: makeScreenName(newFramebufIdx) }
       }, newFramebufIdx));
       dispatch(Toolbar.actions.setFramebufUIState(newFramebufIdx, selectors.getFramebufUIState(state, fbidx)));
     })
@@ -153,7 +153,7 @@ function newScreen(mode?: ColorMode): ThunkAction<void, RootState, undefined, Ac
       dispatch(Framebuffer.actions.setFields({
         ...colors,
         ...modeFields,
-        name: makeScreenName(newFramebufIdx)
+        metadata: { name: makeScreenName(newFramebufIdx) }
       }, newFramebufIdx))
     })
   }

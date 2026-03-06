@@ -184,7 +184,7 @@ const framebufFields = (framebuf: Framebuf) => {
     backgroundColor: framebuf.backgroundColor,
     borderColor: framebuf.borderColor,
     charset: framebuf.charset,
-    name: framebuf.name,
+    metadata: framebuf.metadata,
     framebuf: framebuf.framebuf,
   }
   if (framebuf.ecmMode) {
@@ -375,7 +375,7 @@ export async function dialogExportFile(
 
   try {
     const { data, mimeType } = await getExportData(fmt, framebufs, cf, palette);
-    const screenName = framebufs[fmt.commonExportParams.selectedFramebufIndex]?.name;
+    const screenName = framebufs[fmt.commonExportParams.selectedFramebufIndex]?.metadata?.name;
     const baseName = sanitizeExportFilename(screenName);
     downloadBlob(data, `${baseName}.${fmt.ext}`, mimeType);
   } catch(e: any) {
@@ -391,20 +391,20 @@ export async function dialogImportFile(type: FileFormat, importFile: (fbs: Frame
       if (!baseName) {
         return fbs;
       }
-      const unnamedCount = fbs.filter((fb) => !fb.name || !fb.name.trim()).length;
+      const unnamedCount = fbs.filter((fb) => !fb.metadata?.name || !fb.metadata.name.trim()).length;
       if (unnamedCount === 0) {
         return fbs;
       }
       let unnamedIdx = 0;
       return fbs.map((fb) => {
-        if (fb.name && fb.name.trim()) {
+        if (fb.metadata?.name && fb.metadata.name.trim()) {
           return fb;
         }
         unnamedIdx += 1;
         const suffix = unnamedCount > 1 ? `_${unnamedIdx}` : '';
         return {
           ...fb,
-          name: `${baseName}${suffix}`,
+          metadata: { ...fb.metadata, name: `${baseName}${suffix}` },
         };
       });
     };

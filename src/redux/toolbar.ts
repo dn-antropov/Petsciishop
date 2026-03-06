@@ -180,6 +180,7 @@ const actionCreators = {
   setShowExport: (show: {show:boolean, fmt?:FileFormat}) => createAction('Toolbar/SET_SHOW_EXPORT', show),
   setShowImport: (show: {show:boolean, fmt?:FileFormat}) => createAction('Toolbar/SET_SHOW_IMPORT', show),
   setShowImageConverter: (flag: boolean) => createAction('Toolbar/SET_SHOW_IMAGE_CONVERTER', flag),
+  setShowScreenInfo: (data: { show: boolean, framebufIndex?: number }) => createAction('Toolbar/SET_SHOW_SCREEN_INFO', data),
   setSelectedPaletteRemap: (remapIdx: number) => createAction('Toolbar/SET_SELECTED_PALETTE_REMAP', remapIdx),
   setCanvasGrid: (flag: boolean) => createAction('Toolbar/SET_CANVAS_GRID', flag),
   setPreviewGrid: (flag: boolean) => createAction('Toolbar/SET_PREVIEW_GRID', flag),
@@ -232,7 +233,8 @@ export class Toolbar {
           state.toolbar.showSettings ||
           state.toolbar.showCustomFonts ||
           state.toolbar.showImageConverter ||
-          state.toolbar.showNewDocumentMode;
+          state.toolbar.showNewDocumentMode ||
+          state.toolbar.showScreenInfo.show;
 
         if (inModal) {
           // These shouldn't early exit this function since we check for other
@@ -255,6 +257,9 @@ export class Toolbar {
             }
             if (showNewDocumentMode) {
               dispatch(Toolbar.actions.setShowNewDocumentMode(false));
+            }
+            if (state.toolbar.showScreenInfo.show) {
+              dispatch(Toolbar.actions.setShowScreenInfo({ show: false }));
             }
           }
           return;
@@ -569,6 +574,7 @@ export class Toolbar {
       showExport: { show: false },
       showImport: { show: false },
       showImageConverter: false,
+      showScreenInfo: { show: false },
       canvasGrid: false,
       previewGrid: false,
       showColorModeLabels: true,
@@ -707,6 +713,8 @@ export class Toolbar {
         return updateField(state, 'showImport', action.data);
       case 'Toolbar/SET_SHOW_IMAGE_CONVERTER':
         return updateField(state, 'showImageConverter', action.data);
+      case 'Toolbar/SET_SHOW_SCREEN_INFO':
+        return updateField(state, 'showScreenInfo', action.data);
       case 'Toolbar/SET_CANVAS_GRID':
         return updateField(state, 'canvasGrid', action.data);
       case 'Toolbar/SET_PREVIEW_GRID':

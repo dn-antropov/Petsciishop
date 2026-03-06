@@ -6,6 +6,7 @@ import {
   Coord2,
   Framebuf,
   Pixel,
+  ScreenMetadata,
   DEFAULT_FB_HEIGHT,
   DEFAULT_FB_WIDTH
 } from './types'
@@ -52,7 +53,7 @@ const SHIFT_VERTICAL = 'Framebuffer/SHIFT_VERTICAL'
 const SET_BACKGROUND_COLOR = 'Framebuffer/SET_BACKGROUND_COLOR'
 const SET_BORDER_COLOR = 'Framebuffer/SET_BORDER_COLOR'
 const SET_CHARSET = 'Framebuffer/SET_CHARSET'
-const SET_NAME = 'Framebuffer/SET_NAME'
+const SET_METADATA = 'Framebuffer/SET_METADATA'
 const SET_DIMS = 'Framebuffer/SET_DIMS'
 const SET_ECM_MODE = 'Framebuffer/SET_ECM_MODE'
 const SET_EXT_BG_COLOR = 'Framebuffer/SET_EXT_BG_COLOR'
@@ -73,7 +74,7 @@ const actionCreators = {
   setBackgroundColor: (data: number, framebufIndex: number) => createFbAction(SET_BACKGROUND_COLOR, framebufIndex, null, data),
   setBorderColor: (data: number, framebufIndex: number) => createFbAction(SET_BORDER_COLOR, framebufIndex, null, data),
   setCharset: (data: string, framebufIndex: number) => createFbAction(SET_CHARSET, framebufIndex, null, data),
-  setName: (data: string|undefined, framebufIndex: number) => createFbAction(SET_NAME, framebufIndex, null, data),
+  setMetadata: (data: ScreenMetadata|undefined, framebufIndex: number) => createFbAction(SET_METADATA, framebufIndex, null, data),
 
   setDims: (data: { width: number, height: number }, framebufIndex: number) => createFbAction(SET_DIMS, framebufIndex, null, data),
 
@@ -195,7 +196,7 @@ export function fbReducer(state: Framebuf = {
   backgroundColor: DEFAULT_BACKGROUND_COLOR,
   borderColor: DEFAULT_BORDER_COLOR,
   charset: CHARSET_UPPER,
-  name: undefined,
+  metadata: undefined,
   ecmMode: false,
   extBgColor1: 0,
   extBgColor2: 0,
@@ -226,9 +227,10 @@ export function fbReducer(state: Framebuf = {
         ...state,
         ...action.data
       }
-    case IMPORT_FILE:
+    case IMPORT_FILE: {
       const c = action.data
-      const name = fp.maybeDefault(c.name, makeScreenName(action.framebufIndex))
+      const importedName = c.metadata?.name ?? c.name;
+      const name = fp.maybeDefault(importedName, makeScreenName(action.framebufIndex))
       return {
         framebuf: c.framebuf,
         width: c.width,
@@ -236,7 +238,12 @@ export function fbReducer(state: Framebuf = {
         backgroundColor: c.backgroundColor,
         borderColor: c.borderColor,
         charset: c.charset,
-        name,
+        metadata: {
+          name,
+          author: c.metadata?.author ?? c.author,
+          date: c.metadata?.date ?? c.date,
+          description: c.metadata?.description ?? c.description,
+        },
         ecmMode: c.ecmMode ?? false,
         extBgColor1: c.extBgColor1 ?? 0,
         extBgColor2: c.extBgColor2 ?? 0,
@@ -246,14 +253,15 @@ export function fbReducer(state: Framebuf = {
         mcmColor2: c.mcmColor2 ?? 0,
         paletteId: c.paletteId ?? undefined
       }
+    }
     case SET_BACKGROUND_COLOR:
       return updateField(state, 'backgroundColor', action.data);
     case SET_BORDER_COLOR:
       return updateField(state, 'borderColor', action.data);
     case SET_CHARSET:
       return updateField(state, 'charset', action.data);
-    case SET_NAME:
-      return updateField(state, 'name', action.data);
+    case SET_METADATA:
+      return updateField(state, 'metadata', action.data);
     case SET_ECM_MODE:
       return {
         ...state,
