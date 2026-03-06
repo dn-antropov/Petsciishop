@@ -5,6 +5,15 @@ function toHex2(n: number): string {
   return n.toString(16).toUpperCase().padStart(2, '0');
 }
 
+function escapeXmlText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
 export function saveSDD(fb: FramebufWithFont): string {
   const { framebuf, width, height, backgroundColor, borderColor, name } = fb;
   const isEcm = fb.ecmMode;
@@ -48,7 +57,7 @@ export function saveSDD(fb: FramebufWithFont): string {
     lines.push(`            <RowData>${cells.join(',')}</RowData>`);
   }
 
-  lines.push(`            <Description>${name ?? 'Screen'}</Description>`);
+  lines.push(`            <Description>${escapeXmlText(name ?? 'Screen')}</Description>`);
   if (fb.paletteId) {
     lines.push(`            <PaletteId>${fb.paletteId}</PaletteId>`);
   }

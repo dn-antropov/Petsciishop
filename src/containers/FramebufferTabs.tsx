@@ -25,6 +25,7 @@ import CharGrid from '../components/CharGrid'
 import * as framebuf from '../redux/editor'
 import * as toolbar from '../redux/toolbar'
 import * as screens from '../redux/screens'
+import * as ReduxRoot from '../redux/root'
 import * as selectors from '../redux/selectors'
 import * as screensSelectors from '../redux/screensSelectors'
 import { getEffectiveColorPalette } from '../redux/settingsSelectors'
@@ -201,6 +202,8 @@ interface FramebufTabProps {
   onSetActiveTab: (id: number) => void;
   onDuplicateTab: (id: number) => void;
   onRemoveTab: (id: number) => void;
+  onShareAsUrl: (framebufId: number) => void;
+  onSaveAsSdd: (framebufId: number) => void;
 };
 
 class FramebufTab extends PureComponent<FramebufTabProps> {
@@ -216,6 +219,14 @@ class FramebufTab extends PureComponent<FramebufTabProps> {
 
   handleMenuRemove = () => {
     this.props.onRemoveTab(this.props.id)
+  }
+
+  handleMenuShareAsUrl = () => {
+    this.props.onShareAsUrl(this.props.framebufId)
+  }
+
+  handleMenuSaveAsSdd = () => {
+    this.props.onSaveAsSdd(this.props.framebufId)
   }
 
   handleNameSave = (name: string) => {
@@ -268,6 +279,17 @@ class FramebufTab extends PureComponent<FramebufTabProps> {
       {
         label: "Remove",
         click: this.handleMenuRemove
+      },
+      {
+        type: 'separator' as const
+      },
+      {
+        label: 'Share as URL',
+        click: this.handleMenuShareAsUrl
+      },
+      {
+        label: 'Save as .sdd',
+        click: this.handleMenuSaveAsSdd
       }
     ];
 
@@ -448,6 +470,8 @@ function NewTabButton (props: {
 interface FramebufferTabsDispatch {
   Screens: screens.PropsFromDispatch;
   Toolbar: toolbar.PropsFromDispatch;
+  shareScreenAsUrl: (framebufId: number) => void;
+  exportScreenAsSdd: (framebufId: number) => void;
 }
 
 interface FramebufferTabsProps {
@@ -496,6 +520,16 @@ function FramebufferTabs_(props: FramebufferTabsProps & FramebufferTabsDispatch)
     props.Toolbar.setCtrlKey(false);
   }, [props.Screens, props.Toolbar]);
 
+  const handleSaveAsSdd = useCallback((framebufId: number) => {
+    props.exportScreenAsSdd(framebufId);
+    props.Toolbar.setCtrlKey(false);
+  }, [props.exportScreenAsSdd, props.Toolbar]);
+
+  const handleShareAsUrl = useCallback((framebufId: number) => {
+    props.shareScreenAsUrl(framebufId);
+    props.Toolbar.setCtrlKey(false);
+  }, [props.shareScreenAsUrl, props.Toolbar]);
+
   const lis = props.screens.map((framebufId, i) => {
     const fb = props.getFramebufByIndex(framebufId)!;
     const { font } = props.getFont(fb);
@@ -507,6 +541,8 @@ function FramebufferTabs_(props: FramebufferTabsProps & FramebufferTabsDispatch)
         onSetActiveTab={handleActiveClick}
         onRemoveTab={handleRemoveTab}
         onDuplicateTab={handleDuplicateTab}
+        onShareAsUrl={handleShareAsUrl}
+        onSaveAsSdd={handleSaveAsSdd}
         framebuf={fb}
         active={i === props.activeScreen}
         font={font}
@@ -553,7 +589,13 @@ export default connect(
     return {
       Toolbar: toolbar.Toolbar.bindDispatch(dispatch),
       Screens: bindActionCreators(screens.actions, dispatch),
-      setFramebufName: bindActionCreators(framebuf.actions.setName, dispatch)
+      setFramebufName: bindActionCreators(framebuf.actions.setName, dispatch),
+      shareScreenAsUrl: (framebufId: number) => {
+        dispatch((ReduxRoot.actions.shareURL(framebufId) as any));
+      },
+      exportScreenAsSdd: (framebufId: number) => {
+        dispatch((ReduxRoot.actions.fileExportAsForFramebuf(utils.formats.sdd, framebufId) as any));
+      }
     }
   }
 )(FramebufferTabs_)

@@ -361,10 +361,22 @@ export async function dialogExportFile(
   cf: customFonts.CustomFonts,
   palette: Rgb[]
 ) {
+  const sanitizeExportFilename = (name: string | undefined): string => {
+    if (!name) return 'export';
+    // Keep Unicode letters/numbers (including Greek), strip filesystem-unsafe chars.
+    const cleaned = name
+      .normalize('NFKC')
+      .replace(/[\/\\:*?"<>|]/g, '_')
+      .replace(/[\u0000-\u001F]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return cleaned || 'export';
+  };
+
   try {
     const { data, mimeType } = await getExportData(fmt, framebufs, cf, palette);
     const screenName = framebufs[fmt.commonExportParams.selectedFramebufIndex]?.name;
-    const baseName = screenName ? screenName.replace(/[^a-zA-Z0-9_\-. ]/g, '_').trim() || 'export' : 'export';
+    const baseName = sanitizeExportFilename(screenName);
     downloadBlob(data, `${baseName}.${fmt.ext}`, mimeType);
   } catch(e: any) {
     showAlert(`Export failed: ${e.message ?? e}`);

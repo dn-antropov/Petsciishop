@@ -106,19 +106,22 @@ export function showToast(message: string, duration = 2200): void {
   const toast = document.createElement('div');
   toast.style.cssText = [
     'position:fixed',
-    'bottom:22px',
+    'top:50%',
     'left:50%',
-    'transform:translateX(-50%)',
-    'background:#1f1f1f',
-    'color:#eee',
-    'border:1px solid #555',
-    'border-radius:4px',
-    'padding:8px 12px',
-    'font-size:13px',
+    'transform:translate(-50%, -50%)',
+    'background:rgba(24,24,24,0.96)',
+    'color:#fff',
+    'border:1px solid #7a7a7a',
+    'border-radius:8px',
+    'padding:14px 18px',
+    'font-size:15px',
+    'font-weight:600',
     'line-height:1.4',
     'z-index:99999',
     'font-family:system-ui,sans-serif',
-    'box-shadow:0 8px 20px rgba(0,0,0,0.6)',
+    'box-shadow:0 14px 34px rgba(0,0,0,0.75)',
+    'min-width:260px',
+    'text-align:center',
     'pointer-events:none'
   ].join(';');
   toast.textContent = message;

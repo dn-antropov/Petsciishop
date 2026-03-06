@@ -184,11 +184,22 @@ export const actions = {
   },
 
   fileExportAs: (fmt: FileFormat): RootStateThunk => {
+    return (dispatch, getState) => {
+      const state = getState()
+      const selectedFramebufIndex = screensSelectors.getCurrentScreenFramebufIndex(state)
+      if (selectedFramebufIndex === null) {
+        return;
+      }
+      dispatch(actions.fileExportAsForFramebuf(fmt, selectedFramebufIndex));
+    }
+  },
+
+  fileExportAsForFramebuf: (fmt: FileFormat, targetFramebufIndex: number): RootStateThunk => {
     return (_dispatch, getState) => {
       const state = getState()
       const screens = screensSelectors.getScreens(state)
       let remappedFbIndex = 0
-      const selectedFramebufIndex = screensSelectors.getCurrentScreenFramebufIndex(state)
+      const selectedFramebufIndex = targetFramebufIndex
       const framebufs = screens.map((fbIdx, i) => {
         const framebuf = selectors.getFramebufByIndex(state, fbIdx)
         if (!framebuf) {
@@ -214,10 +225,10 @@ export const actions = {
     }
   },
 
-  shareURL: (): RootStateThunk => {
+  shareURL: (targetFramebufIndex?: number): RootStateThunk => {
     return async (_dispatch, getState) => {
       const state = getState();
-      const framebufIndex = screensSelectors.getCurrentScreenFramebufIndex(state);
+      const framebufIndex = targetFramebufIndex ?? screensSelectors.getCurrentScreenFramebufIndex(state);
       if (framebufIndex === null) {
         return;
       }
