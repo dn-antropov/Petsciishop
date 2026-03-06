@@ -81,6 +81,32 @@
   outline-color: var(--input-hover-outline-color);
 }
 
+.tabNameButton {
+  font: inherit;
+  font-size: 11px;
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  padding-top: 0;
+  padding-bottom: 0;
+  appearance: none;
+  cursor: pointer;
+  color: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tabNameButton:hover,
+.tabNameButton:focus-visible {
+  outline-color: rgba(255,255,255,0.18);
+  color: #c9c9c9;
+}
+
+.tabNameButton:focus-visible {
+  outline-style: solid;
+  outline-width: 1px;
+}
+
 .tabNameEditor {
   font-size: 12px;
   width: 100%;

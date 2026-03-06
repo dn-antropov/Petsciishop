@@ -8,8 +8,7 @@ const WIDTH = 40;
 const HEIGHT = 25;
 const CELL_COUNT = WIDTH * HEIGHT;
 const PACKED_COLOR_BYTES = CELL_COUNT / 2;
-const MAX_NAME_BYTES = 64;
-const MAX_METADATA_BYTES = 128;
+const MAX_METADATA_FIELD_BYTES = 65535;
 const MAX_HASH_PAYLOAD_CHARS = 4096;
 const MAX_INFLATED_BYTES = 4096;
 
@@ -38,6 +37,13 @@ function requireNibble(value: number, label: string): number {
 function requireByte(value: number, label: string): number {
   if (!Number.isInteger(value) || value < 0 || value > 255) {
     throw new Error(`Invalid ${label}: expected 0-255`);
+  }
+  return value;
+}
+
+function requireUint16(value: number, label: string): number {
+  if (!Number.isInteger(value) || value < 0 || value > MAX_METADATA_FIELD_BYTES) {
+    throw new Error(`Invalid ${label}: expected 0-${MAX_METADATA_FIELD_BYTES}`);
   }
   return value;
 }
@@ -108,25 +114,25 @@ export function encodePSS1(fb: Framebuf): Uint8Array {
 
     // Calculate total metadata size
     let metaSize = 1; // flags byte
-    if (nameBytes.length > 0) metaSize += 1 + nameBytes.length;
-    if (authorBytes.length > 0) metaSize += 1 + authorBytes.length;
+    if (nameBytes.length > 0) metaSize += 2 + nameBytes.length;
+    if (authorBytes.length > 0) metaSize += 2 + authorBytes.length;
     if (hasDate) metaSize += 3;
-    if (noteBytes.length > 0) metaSize += 1 + noteBytes.length;
-
-    if (metaSize > MAX_METADATA_BYTES) {
-      throw new Error(`Metadata too large: ${metaSize} bytes (max ${MAX_METADATA_BYTES})`);
-    }
+    if (noteBytes.length > 0) metaSize += 2 + noteBytes.length;
 
     metadataBytes = new Uint8Array(metaSize);
     let mPtr = 0;
     metadataBytes[mPtr++] = flags;
     if (nameBytes.length > 0) {
-      metadataBytes[mPtr++] = nameBytes.length;
+      const len = requireUint16(nameBytes.length, 'name metadata length');
+      metadataBytes[mPtr++] = (len >> 8) & 0xff;
+      metadataBytes[mPtr++] = len & 0xff;
       metadataBytes.set(nameBytes, mPtr);
       mPtr += nameBytes.length;
     }
     if (authorBytes.length > 0) {
-      metadataBytes[mPtr++] = authorBytes.length;
+      const len = requireUint16(authorBytes.length, 'author metadata length');
+      metadataBytes[mPtr++] = (len >> 8) & 0xff;
+      metadataBytes[mPtr++] = len & 0xff;
       metadataBytes.set(authorBytes, mPtr);
       mPtr += authorBytes.length;
     }
@@ -137,7 +143,9 @@ export function encodePSS1(fb: Framebuf): Uint8Array {
       metadataBytes[mPtr++] = d;
     }
     if (noteBytes.length > 0) {
-      metadataBytes[mPtr++] = noteBytes.length;
+      const len = requireUint16(noteBytes.length, 'description metadata length');
+      metadataBytes[mPtr++] = (len >> 8) & 0xff;
+      metadataBytes[mPtr++] = len & 0xff;
       metadataBytes.set(noteBytes, mPtr);
       mPtr += noteBytes.length;
     }
@@ -259,15 +267,15 @@ export function decodePSS1(compressed: Uint8Array): Framebuf {
       let description: string | undefined;
 
       if (flags & 0x01) {
-        if (ptr >= inflated.length) throw new Error('Malformed metadata.');
-        const len = inflated[ptr++];
+        if (ptr + 2 > inflated.length) throw new Error('Malformed metadata.');
+        const len = (inflated[ptr++] << 8) | inflated[ptr++];
         if (ptr + len > inflated.length) throw new Error('Malformed metadata.');
         name = dec.decode(inflated.subarray(ptr, ptr + len));
         ptr += len;
       }
       if (flags & 0x02) {
-        if (ptr >= inflated.length) throw new Error('Malformed metadata.');
-        const len = inflated[ptr++];
+        if (ptr + 2 > inflated.length) throw new Error('Malformed metadata.');
+        const len = (inflated[ptr++] << 8) | inflated[ptr++];
         if (ptr + len > inflated.length) throw new Error('Malformed metadata.');
         author = dec.decode(inflated.subarray(ptr, ptr + len));
         ptr += len;
@@ -280,8 +288,8 @@ export function decodePSS1(compressed: Uint8Array): Framebuf {
         date = `${(2000 + yy).toString().padStart(4, '0')}-${mm.toString().padStart(2, '0')}-${dd.toString().padStart(2, '0')}`;
       }
       if (flags & 0x08) {
-        if (ptr >= inflated.length) throw new Error('Malformed metadata.');
-        const len = inflated[ptr++];
+        if (ptr + 2 > inflated.length) throw new Error('Malformed metadata.');
+        const len = (inflated[ptr++] << 8) | inflated[ptr++];
         if (ptr + len > inflated.length) throw new Error('Malformed metadata.');
         description = dec.decode(inflated.subarray(ptr, ptr + len));
         ptr += len;
@@ -352,4 +360,3 @@ export function parseShareURL(hash: string): Framebuf | null {
   }
   return decodePSS1(decodeBase64Url(payload));
 }
-

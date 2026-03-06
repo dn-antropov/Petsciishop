@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { connect } from 'react-redux';
 import { bindActionCreators } from 'redux';
 import { Toolbar } from '../redux/toolbar';
@@ -8,7 +8,9 @@ import { RootState, ScreenMetadata } from '../redux/types';
 import Modal from '../components/Modal';
 import styles from './ScreenInfoModal.module.css';
 
-const MAX_METADATA_BYTES = 128;
+const MAX_NAME_CHARS = 48;
+const MAX_AUTHOR_CHARS = 48;
+const MAX_DESCRIPTION_CHARS = 128;
 const MONTH_CODES = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 const URL_RE = /(https?:\/\/[^\s]+)/g;
 
@@ -20,19 +22,6 @@ function formatDateForView(date: string): string {
   const day = m[3];
   if (monthIdx < 0 || monthIdx > 11) return date;
   return `${day}/${MONTH_CODES[monthIdx]}/${year}`;
-}
-
-function metadataByteSize(name: string, author: string, date: string, description: string): number {
-  const enc = new TextEncoder();
-  let size = 1; // flags byte
-  const nameBytes = name ? enc.encode(name).length : 0;
-  const authorBytes = author ? enc.encode(author).length : 0;
-  const descriptionBytes = description ? enc.encode(description).length : 0;
-  if (nameBytes > 0) size += 1 + nameBytes;
-  if (authorBytes > 0) size += 1 + authorBytes;
-  if (date) size += 3;
-  if (descriptionBytes > 0) size += 1 + descriptionBytes;
-  return size;
 }
 
 function renderTextWithLinks(text: string): React.ReactNode {
@@ -82,17 +71,24 @@ function ScreenInfoModal({ show, framebufIndex, metadata, onClose, setMetadata, 
     }
   }, [show, metadata]);
 
-  const byteSize = useMemo(
-    () => metadataByteSize(name, author, date, description),
-    [name, author, date, description]
-  );
+  const handleNameChange = useCallback((nextName: string) => {
+    setName(nextName.slice(0, MAX_NAME_CHARS));
+  }, []);
 
-  const hasAnyField = !!(name || author || date || description);
-  const effectiveSize = hasAnyField ? byteSize : 0;
-  const overBudget = effectiveSize > MAX_METADATA_BYTES;
+  const handleAuthorChange = useCallback((nextAuthor: string) => {
+    setAuthor(nextAuthor.slice(0, MAX_AUTHOR_CHARS));
+  }, []);
+
+  const handleDescriptionChange = useCallback((nextDescription: string) => {
+    setDescription(nextDescription.slice(0, MAX_DESCRIPTION_CHARS));
+  }, []);
+
+  const handleDateChange = useCallback((nextDate: string) => {
+    setDate(nextDate);
+  }, []);
 
   const handleSave = useCallback(() => {
-    if (!isEditing || framebufIndex === undefined || overBudget) return;
+    if (!isEditing || framebufIndex === undefined) return;
     const trimmed: ScreenMetadata = {
       name: name.trim() || undefined,
       author: author.trim() || undefined,
@@ -102,7 +98,7 @@ function ScreenInfoModal({ show, framebufIndex, metadata, onClose, setMetadata, 
     setMetadata(trimmed, framebufIndex);
     setShortcutsActive(true);
     onClose();
-  }, [isEditing, framebufIndex, name, author, date, description, overBudget, setMetadata, onClose, setShortcutsActive]);
+  }, [isEditing, framebufIndex, name, author, date, description, setMetadata, onClose, setShortcutsActive]);
 
   const handleStartEdit = useCallback(() => {
     setIsEditing(true);
@@ -135,14 +131,17 @@ function ScreenInfoModal({ show, framebufIndex, metadata, onClose, setMetadata, 
         <div className={styles.field}>
           <label className={styles.label}>Name</label>
           {isEditing ? (
-            <input
-              className={styles.input}
-              type="text"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              maxLength={48}
-              autoFocus
-            />
+            <>
+              <input
+                className={styles.input}
+                type="text"
+                value={name}
+                onChange={e => handleNameChange(e.target.value)}
+                maxLength={MAX_NAME_CHARS}
+                autoFocus
+              />
+              <div className={styles.fieldCounter}>{name.length} / {MAX_NAME_CHARS}</div>
+            </>
           ) : (
             <div className={name ? styles.valueTextPlain : styles.valueTextEmpty}>{renderTextWithLinks(name)}</div>
           )}
@@ -151,13 +150,16 @@ function ScreenInfoModal({ show, framebufIndex, metadata, onClose, setMetadata, 
         <div className={styles.field}>
           <label className={styles.label}>Author</label>
           {isEditing ? (
-            <input
-              className={styles.input}
-              type="text"
-              value={author}
-              onChange={e => setAuthor(e.target.value)}
-              maxLength={48}
-            />
+            <>
+              <input
+                className={styles.input}
+                type="text"
+                value={author}
+                onChange={e => handleAuthorChange(e.target.value)}
+                maxLength={MAX_AUTHOR_CHARS}
+              />
+              <div className={styles.fieldCounter}>{author.length} / {MAX_AUTHOR_CHARS}</div>
+            </>
           ) : (
             <div className={author ? styles.valueTextPlain : styles.valueTextEmpty}>{renderTextWithLinks(author)}</div>
           )}
@@ -170,7 +172,7 @@ function ScreenInfoModal({ show, framebufIndex, metadata, onClose, setMetadata, 
               className={styles.input}
               type="date"
               value={date}
-              onChange={e => setDate(e.target.value)}
+              onChange={e => handleDateChange(e.target.value)}
             />
           ) : (
             <div className={date ? styles.valueTextPlain : styles.valueTextEmpty}>{date ? formatDateForView(date) : '-'}</div>
@@ -180,22 +182,20 @@ function ScreenInfoModal({ show, framebufIndex, metadata, onClose, setMetadata, 
         <div className={styles.field}>
           <label className={styles.label}>Description</label>
           {isEditing ? (
-            <textarea
-              className={styles.textarea}
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              rows={2}
-            />
+            <>
+              <textarea
+                className={styles.textarea}
+                value={description}
+                onChange={e => handleDescriptionChange(e.target.value)}
+                maxLength={MAX_DESCRIPTION_CHARS}
+                rows={2}
+              />
+              <div className={styles.fieldCounter}>{description.length} / {MAX_DESCRIPTION_CHARS}</div>
+            </>
           ) : (
             <div className={description ? styles.valueTextPlain : styles.valueTextEmpty}>{renderTextWithLinks(description)}</div>
           )}
         </div>
-
-        {isEditing && (
-          <div className={overBudget ? styles.budgetOver : styles.budget}>
-            {effectiveSize} / {MAX_METADATA_BYTES} bytes
-          </div>
-        )}
 
         <div className={styles.buttons}>
           {!isEditing ? (
@@ -206,7 +206,7 @@ function ScreenInfoModal({ show, framebufIndex, metadata, onClose, setMetadata, 
           ) : (
             <>
               <button className={styles.cancelBtn} onClick={handleDiscardEdits}>Discard</button>
-              <button className={styles.saveBtn} onClick={handleSave} disabled={overBudget}>Save</button>
+              <button className={styles.saveBtn} onClick={handleSave}>Save</button>
             </>
           )}
         </div>

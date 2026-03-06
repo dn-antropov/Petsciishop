@@ -1,5 +1,5 @@
 
-import React, { Component, PureComponent, useState, useCallback, CSSProperties } from 'react';
+import React, { PureComponent, useState, useCallback, CSSProperties } from 'react';
 import { connect } from 'react-redux'
 import { bindActionCreators } from 'redux'
 import {
@@ -39,142 +39,24 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import styles from './FramebufferTabs.module.css'
 import { Framebuf, Rgb, Font, RootState } from '../redux/types';
 
-interface NameInputDispatchProps {
-  Toolbar: toolbar.PropsFromDispatch;
-}
-
-interface NameInputProps {
+interface FileNameLabelProps {
   name: string;
-
-  onSubmit: (name: string) => void;
-  onCancel: () => void;
-  onBlur: () => void;
+  onOpenInfo: () => void;
 }
 
-interface NameInputState {
-  name: string;
-}
-
-// This class is a bit funky with how it disables/enables keyboard shortcuts
-// globally for the app while the input element has focus.  Maybe there'd be a
-// better way to do this, but this seems to work.
-class NameInput_ extends Component<NameInputProps & NameInputDispatchProps, NameInputState> {
-  state = {
-    name: this.props.name
-  }
-
-  componentWillUnmount () {
-    this.props.Toolbar.setShortcutsActive(true)
-  }
-
-  handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
-    this.props.onSubmit(this.state.name)
-    this.props.Toolbar.setShortcutsActive(true)
-  }
-
-  handleChange = (e: React.FormEvent<EventTarget>) => {
-    let target = e.target as HTMLInputElement;
-    this.setState({ name: target.value })
-  }
-
-  handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      this.props.onCancel()
-      this.props.Toolbar.setShortcutsActive(true)
-    }
-  }
-
-  handleBlur = (_e: React.FormEvent<HTMLInputElement>) => {
-    this.props.onBlur()
-    this.props.Toolbar.setShortcutsActive(true)
-  }
-
-  handleFocus = (e: React.FormEvent<HTMLInputElement>) => {
-    let target = e.target as HTMLInputElement;
-    this.props.Toolbar.setShortcutsActive(false)
-    target.select()
-  }
-
-  render () {
-    return (
-      <div className={styles.tabNameEditor}>
-        <form onSubmit={this.handleSubmit}>
-          <input
-            autoFocus
-            onKeyDown={this.handleKeyDown}
-            value={this.state.name}
-            onChange={this.handleChange}
-            onBlur={this.handleBlur}
-            onFocus={this.handleFocus}
-            type='text'
-            size={14} />
-        </form>
-      </div>
-    )
-  }
-}
-
-const NameInput = connect(
-  null,
-  (dispatch) => {
-    return {
-      Toolbar: bindActionCreators(toolbar.Toolbar.actions, dispatch)
-    }
-  }
-)(NameInput_)
-
-
-interface NameEditorProps {
-  name: string;
-
-  onNameSave: (name: string) => void;
-}
-
-interface NameEditorState {
-  editing: boolean;
-}
-
-class NameEditor extends Component<NameEditorProps, NameEditorState> {
-  state = {
-    editing: false
-  }
-
-  handleEditingClick = () => {
-    this.setState({ editing: true })
-  }
-
-  handleBlur = () => {
-    this.setState({ editing: false})
-  }
-
-  handleSubmit = (name: string) => {
-    this.setState({ editing: false})
-    this.props.onNameSave(name)
-  }
-
-  handleCancel = () => {
-    this.setState({ editing: false})
-  }
-
-  render () {
-    const nameElts = this.state.editing ?
-      <NameInput
-        name={this.props.name}
-        onSubmit={this.handleSubmit}
-        onBlur={this.handleBlur}
-        onCancel={this.handleCancel}
-      /> :
-      <div className={styles.tabName} onClick={this.handleEditingClick}>
-        {this.props.name}
-      </div>
-    return (
-      <div className={styles.tabNameContainer}>
-        {nameElts}
-      </div>
-    )
-  }
+function FileNameLabel({ name, onOpenInfo }: FileNameLabelProps) {
+  return (
+    <div className={styles.tabNameContainer}>
+      <button
+        type='button'
+        className={classnames(styles.tabName, styles.tabNameButton)}
+        onClick={onOpenInfo}
+        title='Open file info'
+      >
+        {name}
+      </button>
+    </div>
+  );
 }
 
 function computeContainerSize(fb: Framebuf, maxHeight: number) {
@@ -228,12 +110,6 @@ class FramebufTab extends PureComponent<FramebufTabProps> {
 
   handleMenuSaveAsSdd = () => {
     this.props.onSaveAsSdd(this.props.framebufId)
-  }
-
-  handleNameSave = (name: string) => {
-    if (name !== '') {
-      this.props.setMetadata({ ...this.props.framebuf.metadata, name }, this.props.framebufId)
-    }
   }
 
   handleMenuScreenInfo = () => {
@@ -347,9 +223,9 @@ class FramebufTab extends PureComponent<FramebufTabProps> {
             </div>
           </div>
         </ContextMenuArea>
-        <NameEditor
+        <FileNameLabel
           name={fp.maybeDefault(this.props.framebuf.metadata?.name, 'Untitled' as string)}
-          onNameSave={this.handleNameSave}
+          onOpenInfo={this.handleMenuScreenInfo}
         />
       </div>
     )

@@ -11,7 +11,6 @@ import CrtOverlay from '../components/CrtOverlay'
 import { CanvasStatusbar } from '../components/Statusbar'
 
 import CharSelect from './CharSelect'
-import ScreenInfoPanel from './ScreenInfoPanel'
 
 import * as framebuf from '../redux/editor'
 import { Framebuffer } from '../redux/editor'
@@ -929,7 +928,6 @@ interface EditorProps {
   paletteId: string;
   selectedTool: Tool;
   crtFilter: CrtFilter;
-  showFileInfoPanel: boolean;
 
   integerScale: boolean;
   containerSize: { width: number, height: number };
@@ -1222,7 +1220,6 @@ class Editor extends Component<EditorProps & EditorDispatch, EditorState> {
             />
           </div>
           <CharSelect canvasScale={{scaleX, scaleY}} inspectedScreencode={inspectedScreencode} inspectedColorIndex={inspectedColorIndex}/>
-          {this.props.showFileInfoPanel && <ScreenInfoPanel />}
         </div>
       </div>
     )
@@ -1243,7 +1240,6 @@ export default connect(
       integerScale: getSettingsIntegerScale(state),
       crtFilter: getSettingsCrtFilter(state),
       framebufUIState: selectors.getFramebufUIState(state, framebufIndex),
-      showFileInfoPanel: state.toolbar.showFileInfoPanel
     }
   },
   dispatch => {
