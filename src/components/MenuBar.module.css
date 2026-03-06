@@ -26,9 +26,11 @@
 }
 
 .menuButton:hover,
-.menuButtonActive {
+.menuButtonActive,
+.menuButton:focus-visible {
   background: rgba(255, 255, 255, 0.12);
   color: #fff;
+  outline: none;
 }
 
 .dropdown {
@@ -47,6 +49,12 @@
 
 .item {
   position: relative;
+}
+
+.itemButton {
+  width: 100%;
+  border: none;
+  background: none;
   padding: 5px 32px 5px 16px;
   font-size: 13px;
   color: #eee;
@@ -55,10 +63,13 @@
   justify-content: space-between;
   align-items: center;
   gap: 16px;
+  text-align: left;
 }
 
-.item:hover {
+.itemButton:hover,
+.itemButton:focus-visible {
   background: rgba(255, 255, 255, 0.1);
+  outline: none;
 }
 
 .itemLabel {
@@ -102,6 +113,10 @@
 }
 
 .item:hover > .submenu {
+  display: block;
+}
+
+.item:focus-within > .submenu {
   display: block;
 }
 

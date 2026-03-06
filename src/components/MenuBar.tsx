@@ -126,14 +126,62 @@ const menuDefs: Array<{ label: string; items: ItemDef[] }> = [
 interface DropdownProps {
   items: ItemDef[];
   onCommand: (cmd: string) => void;
+  onRequestClose: () => void;
+  menuIndex?: number;
 }
 
-function Dropdown({ items, onCommand }: DropdownProps) {
+function getDirectMenuButtons(menu: HTMLElement): HTMLButtonElement[] {
+  const buttons: HTMLButtonElement[] = [];
+  for (const child of Array.from(menu.children)) {
+    const first = (child as HTMLElement).firstElementChild;
+    if (first instanceof HTMLButtonElement && first.dataset.menuItem === 'true') {
+      buttons.push(first);
+    }
+  }
+  return buttons;
+}
+
+function focusAdjacentMenuItem(current: HTMLButtonElement, direction: 1 | -1): void {
+  const menu = current.closest('ul');
+  if (!(menu instanceof HTMLElement)) return;
+  const buttons = getDirectMenuButtons(menu);
+  const currentIdx = buttons.indexOf(current);
+  if (currentIdx === -1 || buttons.length === 0) return;
+  const nextIdx = (currentIdx + direction + buttons.length) % buttons.length;
+  buttons[nextIdx].focus();
+}
+
+function focusFirstSubmenuItem(button: HTMLButtonElement): void {
+  const item = button.parentElement;
+  if (!(item instanceof HTMLElement)) return;
+  const submenu = item.querySelector(':scope > ul');
+  if (!(submenu instanceof HTMLElement)) return;
+  const first = getDirectMenuButtons(submenu)[0];
+  if (first) first.focus();
+}
+
+function focusParentMenuItem(button: HTMLButtonElement): void {
+  const parentSubmenu = button.closest('ul.submenu');
+  if (!(parentSubmenu instanceof HTMLElement)) return;
+  const parentItem = parentSubmenu.parentElement;
+  if (!(parentItem instanceof HTMLElement)) return;
+  const parentButton = parentItem.querySelector(':scope > button');
+  if (parentButton instanceof HTMLButtonElement) {
+    parentButton.focus();
+  }
+}
+
+function Dropdown({ items, onCommand, onRequestClose, menuIndex }: DropdownProps) {
+  const activateItem = (item: MenuItemDef) => {
+    if (item.cmd) onCommand(item.cmd);
+    if (item.href) window.open(item.href, '_blank');
+  };
+
   const renderMenuItems = (menuItems: ItemDef[], keyPrefix = ''): React.ReactNode =>
     menuItems.map((item, i) => {
       const key = `${keyPrefix}${i}`;
       if (isSep(item)) {
-        return <li key={key} className={s.separator} />;
+        return <li key={key} className={s.separator} role='separator' />;
       }
       if (item.heading) {
         return <li key={key} className={s.heading}>{item.label}</li>;
@@ -143,23 +191,69 @@ function Dropdown({ items, onCommand }: DropdownProps) {
         <li
           key={key}
           className={s.item}
-          onClick={(e) => {
-            if (hasSubmenu) return;
-            e.stopPropagation();
-            if (item.cmd) onCommand(item.cmd);
-            if (item.href) window.open(item.href, '_blank');
-          }}
+          role='none'
         >
-          <span className={s.itemLabel}>
-            {item.label}
-            {item.defaultTag && <span className={s.defaultTag}> default</span>}
-          </span>
-          <span>
-            {item.accelerator && <span className={s.accelerator}>{item.accelerator}</span>}
-            {hasSubmenu && <span className={s.arrow}>▶</span>}
-          </span>
+          <button
+            type='button'
+            className={s.itemButton}
+            data-menu-item='true'
+            role='menuitem'
+            aria-haspopup={hasSubmenu ? 'menu' : undefined}
+            onClick={(e) => {
+              if (hasSubmenu) return;
+              e.stopPropagation();
+              activateItem(item);
+            }}
+            onKeyDown={(e) => {
+              const target = e.currentTarget;
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                focusAdjacentMenuItem(target, 1);
+                return;
+              }
+              if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                focusAdjacentMenuItem(target, -1);
+                return;
+              }
+              if (e.key === 'ArrowRight') {
+                if (hasSubmenu) {
+                  e.preventDefault();
+                  focusFirstSubmenuItem(target);
+                }
+                return;
+              }
+              if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                focusParentMenuItem(target);
+                return;
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                onRequestClose();
+                return;
+              }
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                if (hasSubmenu) {
+                  focusFirstSubmenuItem(target);
+                } else {
+                  activateItem(item);
+                }
+              }
+            }}
+          >
+            <span className={s.itemLabel}>
+              {item.label}
+              {item.defaultTag && <span className={s.defaultTag}> default</span>}
+            </span>
+            <span>
+              {item.accelerator && <span className={s.accelerator}>{item.accelerator}</span>}
+              {hasSubmenu && <span className={s.arrow}>▶</span>}
+            </span>
+          </button>
           {hasSubmenu && (
-            <ul className={s.submenu}>
+            <ul className={s.submenu} role='menu'>
               {renderMenuItems(item.submenu!, `${key}-`)}
             </ul>
           )}
@@ -168,7 +262,7 @@ function Dropdown({ items, onCommand }: DropdownProps) {
     });
 
   return (
-    <ul className={s.dropdown}>
+    <ul className={s.dropdown} role='menu' data-menu-index={menuIndex}>
       {renderMenuItems(items)}
     </ul>
   );
@@ -179,6 +273,7 @@ export default function MenuBar() {
   const dispatch = useDispatch();
   const store = useStore();
   const navRef = React.useRef<HTMLElement>(null);
+  const menuButtonRefs = React.useRef<Array<HTMLButtonElement | null>>([]);
   const crtFilter = useSelector((state: RootState) => getSettingsCrtFilter(state));
   const showColorModeLabels = useSelector((state: RootState) => state.toolbar.showColorModeLabels);
   const canvasGrid = useSelector((state: RootState) => state.toolbar.canvasGrid);
@@ -234,21 +329,80 @@ export default function MenuBar() {
     return menu;
   });
 
+  const focusFirstItemInOpenMenu = (menuIdx: number) => {
+    window.setTimeout(() => {
+      const nav = navRef.current;
+      if (!nav) return;
+      const list = nav.querySelector(`ul[data-menu-index="${menuIdx}"]`);
+      if (!(list instanceof HTMLElement)) return;
+      const firstItem = getDirectMenuButtons(list)[0];
+      if (firstItem) firstItem.focus();
+    }, 0);
+  };
+
   return (
-    <nav className={s.menuBar} ref={navRef}>
+    <nav className={s.menuBar} ref={navRef} role='menubar' aria-label='Main menu'>
       {menus.map((menu, i) => (
         <div key={i} className={s.menu}>
           <button
+            ref={(el) => { menuButtonRefs.current[i] = el; }}
             className={`${s.menuButton} ${openMenu === i ? s.menuButtonActive : ''}`}
             onClick={(e) => {
               e.stopPropagation();
               setOpenMenu(openMenu === i ? null : i);
             }}
+            role='menuitem'
+            aria-haspopup='menu'
+            aria-expanded={openMenu === i}
+            onKeyDown={(e) => {
+              const count = menus.length;
+              if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                const next = (i + 1) % count;
+                menuButtonRefs.current[next]?.focus();
+                if (openMenu !== null) setOpenMenu(next);
+                return;
+              }
+              if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                const prev = (i - 1 + count) % count;
+                menuButtonRefs.current[prev]?.focus();
+                if (openMenu !== null) setOpenMenu(prev);
+                return;
+              }
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setOpenMenu(i);
+                focusFirstItemInOpenMenu(i);
+                return;
+              }
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                const nextOpen = openMenu === i ? null : i;
+                setOpenMenu(nextOpen);
+                if (nextOpen !== null) {
+                  focusFirstItemInOpenMenu(i);
+                }
+                return;
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setOpenMenu(null);
+              }
+            }}
           >
             {menu.label}
           </button>
           {openMenu === i && (
-            <Dropdown items={menu.items} onCommand={handleCommand} />
+            <Dropdown
+              items={menu.items}
+              onCommand={handleCommand}
+              onRequestClose={() => {
+                setOpenMenu(null);
+                menuButtonRefs.current[i]?.focus();
+              }}
+              menuIndex={i}
+            />
           )}
         </div>
       ))}
