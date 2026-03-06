@@ -1,0 +1,102 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 4px;
+  min-width: 340px;
+  max-width: 420px;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: bold;
+  color: #fff;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.label {
+  font-size: 12px;
+  color: #aaa;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.input {
+  background: #222;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #eee;
+  font-size: 13px;
+  padding: 6px 8px;
+  outline: none;
+  font-family: inherit;
+}
+
+.input:focus {
+  border-color: #6cb4f5;
+}
+
+.textarea {
+  composes: input;
+  resize: vertical;
+  min-height: 48px;
+  font-family: inherit;
+}
+
+.budget {
+  font-size: 11px;
+  color: #777;
+  text-align: right;
+}
+
+.budgetOver {
+  composes: budget;
+  color: #e55;
+}
+
+.buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.cancelBtn {
+  padding: 6px 16px;
+  background: #444;
+  color: #eee;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cancelBtn:hover {
+  background: #555;
+}
+
+.saveBtn {
+  padding: 6px 20px;
+  background: #3a7bd5;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.saveBtn:hover {
+  background: #4a8be5;
+}
+
+.saveBtn:disabled {
+  background: #333;
+  color: #666;
+  cursor: not-allowed;
+}

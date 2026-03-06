@@ -27,23 +27,38 @@ export function loadSDD(content: string): Framebuf[] {
 
     const bgEl = screenEl.querySelector('BackgroundColour');
     const borderEl = screenEl.querySelector('BorderColour');
-    const nameEl = screenEl.querySelector('Description');
+    const nameEl = screenEl.querySelector('Name');
+    const descriptionEl = screenEl.querySelector('Description');
     const d022El = screenEl.querySelector('D022Colour');
     const d023El = screenEl.querySelector('D023Colour');
     const d024El = screenEl.querySelector('D024Colour');
     const bk1El = screenEl.querySelector('BK1Colour');
     const bk2El = screenEl.querySelector('BK2Colour');
     const paletteIdEl = screenEl.querySelector('PaletteId');
+    const authorEl = screenEl.querySelector('Author');
+    const dateEl = screenEl.querySelector('Date');
 
     const backgroundColor = bgEl ? parseInt(bgEl.textContent ?? '6') : 6;
     const borderColor = borderEl ? parseInt(borderEl.textContent ?? '14') : 14;
-    const name = nameEl ? (nameEl.textContent?.trim() ?? 'Screen') : 'Screen';
+
+    // New format: <Name> = screen name, <Description> = description field
+    // Old format: <Description> = screen name (no <Name> tag)
+    const isNewFormat = !!nameEl;
+    const name = isNewFormat
+      ? (nameEl!.textContent?.trim() || 'Screen')
+      : (descriptionEl?.textContent?.trim() || 'Screen');
+    const description = isNewFormat
+      ? (descriptionEl?.textContent?.trim() || undefined)
+      : undefined;
+
     const d022Color = d022El ? parseInt(d022El.textContent ?? '0') : 0;
     const d023Color = d023El ? parseInt(d023El.textContent ?? '0') : 0;
     const d024Color = d024El ? parseInt(d024El.textContent ?? '0') : 0;
     const bk1Color = bk1El ? parseInt(bk1El.textContent ?? '0') : NaN;
     const bk2Color = bk2El ? parseInt(bk2El.textContent ?? '0') : NaN;
     const paletteId = paletteIdEl?.textContent?.trim() || undefined;
+    const author = authorEl?.textContent?.trim() || undefined;
+    const date = dateEl?.textContent?.trim() || undefined;
 
     const rowEls = screenEl.querySelectorAll('RowData');
     const pixels: { code: number; color: number }[][] = [];
@@ -75,7 +90,7 @@ export function loadSDD(content: string): Framebuf[] {
       backgroundColor,
       borderColor,
       charset,
-      name,
+      metadata: { name, author, date, description },
       framebuf: pixels,
     };
     if (isExtended) {
@@ -86,8 +101,6 @@ export function loadSDD(content: string): Framebuf[] {
     }
     if (isMcm) {
       fbData.mcmMode = true;
-      // Screen Designer stores MCM shared colors in BK1/BK2.
-      // D022/D023 may differ in some files, so prefer BK1/BK2 and fallback.
       fbData.mcmColor1 = Number.isNaN(bk1Color) ? d022Color : bk1Color;
       fbData.mcmColor2 = Number.isNaN(bk2Color) ? d023Color : bk2Color;
     }

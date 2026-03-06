@@ -198,12 +198,13 @@ interface FramebufTabProps {
   font: Font;
   showColorModeLabels: boolean;
 
-  setName: (name: string, framebufId: number) => void;
+  setMetadata: (data: any, framebufId: number) => void;
   onSetActiveTab: (id: number) => void;
   onDuplicateTab: (id: number) => void;
   onRemoveTab: (id: number) => void;
   onShareAsUrl: (framebufId: number) => void;
   onSaveAsSdd: (framebufId: number) => void;
+  onScreenInfo: (framebufId: number) => void;
 };
 
 class FramebufTab extends PureComponent<FramebufTabProps> {
@@ -231,8 +232,12 @@ class FramebufTab extends PureComponent<FramebufTabProps> {
 
   handleNameSave = (name: string) => {
     if (name !== '') {
-      this.props.setName(name, this.props.framebufId)
+      this.props.setMetadata({ ...this.props.framebuf.metadata, name }, this.props.framebufId)
     }
+  }
+
+  handleMenuScreenInfo = () => {
+    this.props.onScreenInfo(this.props.framebufId)
   }
 
   componentDidUpdate() {
@@ -290,6 +295,13 @@ class FramebufTab extends PureComponent<FramebufTabProps> {
       {
         label: 'Save as .sdd',
         click: this.handleMenuSaveAsSdd
+      },
+      {
+        type: 'separator' as const
+      },
+      {
+        label: 'Screen Info...',
+        click: this.handleMenuScreenInfo
       }
     ];
 
@@ -336,7 +348,7 @@ class FramebufTab extends PureComponent<FramebufTabProps> {
           </div>
         </ContextMenuArea>
         <NameEditor
-          name={fp.maybeDefault(this.props.framebuf.name, 'Untitled' as string)}
+          name={fp.maybeDefault(this.props.framebuf.metadata?.name, 'Untitled' as string)}
           onNameSave={this.handleNameSave}
         />
       </div>
@@ -483,7 +495,7 @@ interface FramebufferTabsProps {
 
   getFramebufByIndex: (framebufId: number) => Framebuf | null;
   getFont: (framebuf: Framebuf) => { charset: string, font: Font };
-  setFramebufName: (name: string, framebufIndex: number) => void;
+  setFramebufMetadata: (data: any, framebufIndex: number) => void;
 }
 
 function FramebufferTabs_(props: FramebufferTabsProps & FramebufferTabsDispatch) {
@@ -530,6 +542,11 @@ function FramebufferTabs_(props: FramebufferTabsProps & FramebufferTabsDispatch)
     props.Toolbar.setCtrlKey(false);
   }, [props.shareScreenAsUrl, props.Toolbar]);
 
+  const handleScreenInfo = useCallback((framebufId: number) => {
+    props.Toolbar.setShowScreenInfo({ show: true, framebufIndex: framebufId });
+    props.Toolbar.setCtrlKey(false);
+  }, [props.Toolbar]);
+
   const lis = props.screens.map((framebufId, i) => {
     const fb = props.getFramebufByIndex(framebufId)!;
     const { font } = props.getFont(fb);
@@ -543,11 +560,12 @@ function FramebufferTabs_(props: FramebufferTabsProps & FramebufferTabsDispatch)
         onDuplicateTab={handleDuplicateTab}
         onShareAsUrl={handleShareAsUrl}
         onSaveAsSdd={handleSaveAsSdd}
+        onScreenInfo={handleScreenInfo}
         framebuf={fb}
         active={i === props.activeScreen}
         font={font}
         colorPalette={props.getColorPaletteByIndex(framebufId)}
-        setName={props.setFramebufName}
+        setMetadata={props.setFramebufMetadata}
         showColorModeLabels={props.showColorModeLabels}
       />
     );
@@ -589,7 +607,7 @@ export default connect(
     return {
       Toolbar: toolbar.Toolbar.bindDispatch(dispatch),
       Screens: bindActionCreators(screens.actions, dispatch),
-      setFramebufName: bindActionCreators(framebuf.actions.setName, dispatch),
+      setFramebufMetadata: bindActionCreators(framebuf.actions.setMetadata, dispatch),
       shareScreenAsUrl: (framebufId: number) => {
         dispatch((ReduxRoot.actions.shareURL(framebufId) as any));
       },

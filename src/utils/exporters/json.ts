@@ -20,7 +20,7 @@ function convertFb(fb: FramebufWithFont) {
     backgroundColor: fb.backgroundColor,
     borderColor: fb.borderColor,
     charset: fb.charset ? fb.charset : 'upper',
-    name: fb.name ? fb.name : undefined,
+    name: fb.metadata?.name || undefined,
     screencodes: flatten2d(fb.framebuf, 'code'),
     colors: flatten2d(fb.framebuf, 'color')
   };
