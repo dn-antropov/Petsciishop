@@ -1,5 +1,5 @@
 
-import { loadMarqCFramebuf, loadD64Framebuf, loadSeq, loadSDD } from './importers'
+import { loadMarqCFramebuf, loadD64Framebuf, loadSeq, loadSDD, loadVCE } from './importers'
 import {
   savePNG,
   saveMarqC,
@@ -125,6 +125,11 @@ export const formats: { [index: string]: FileFormat } = {
   sdd: {
     name: 'Screen Designer Data .sdd',
     ext: 'sdd',
+    commonExportParams: defaultExportCommon,
+  },
+  vce: {
+    name: 'Retro Debugger .vce',
+    ext: 'vce',
     commonExportParams: defaultExportCommon,
   },
 }
@@ -282,6 +287,8 @@ export async function loadFramebuf(content: string | Uint8Array, ext: string): P
     return [fb];
   } else if (ext === '.sdd') {
     return loadSDD(content as string);
+  } else if (ext === '.vce') {
+    return loadVCE(content as Uint8Array);
   }
   return [];
 }

@@ -28,6 +28,7 @@ const importers: MenuItemDef[] = [
   { label: 'PETSCII (.c)',           cmd: 'import-marq-c' },
   { label: 'Screen Designer (.sdd)', cmd: 'import-sdd' },
   { label: 'SEQ (.seq)',             cmd: 'import-seq' },
+  { label: 'Retro Debugger (.vce)', cmd: 'import-vce' },
 ];
 
 const exporters: MenuItemDef[] = [

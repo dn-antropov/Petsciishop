@@ -82,6 +82,10 @@ export interface FileFormatSdd extends FileFormatBase {
   ext: 'sdd';
 }
 
+export interface FileFormatVce extends FileFormatBase {
+  ext: 'vce';
+}
+
 export type FileFormat =
     FileFormatAsm
   | FileFormatD64
@@ -94,3 +98,4 @@ export type FileFormat =
   | FileFormatSeq
   | FileFormatPet
   | FileFormatSdd
+  | FileFormatVce

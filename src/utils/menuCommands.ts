@@ -99,6 +99,9 @@ export function dispatchMenuCommand(
     case 'import-sdd':
       dispatch(ReduxRoot.actions.fileImportAppend(formats.sdd));
       return;
+    case 'import-vce':
+      dispatch(ReduxRoot.actions.fileImportAppend(formats.vce));
+      return;
     case 'load-demo-logo':
       fetch(import.meta.env.BASE_URL + 'demo/Petscii_logo_std.sdd')
         .then(r => r.text())
