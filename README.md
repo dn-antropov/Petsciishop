@@ -24,7 +24,7 @@ Petsciishop is our attempt to take the best ideas from across the C64 community,
 - **SDD as the native format** — rather than inventing yet another file format, we standardized on the [SDD (Screen Designer Data)](https://www.c64-wiki.com/wiki/Screen_Designer_(CBM_prg_Studio)) format: open, XML-based, extensible, and already supported across the C64 toolchain
 - **Multi-screen workspace** — work on multiple screens, export individually or together
 - **CRT display filters** — scanlines, color TV, and B&W TV effects
-- **Drag & drop** — drop `.petmate` files directly into the editor
+- **Drag & drop** — drop `.petsciishop` files directly into the editor
 
 ## Standing on the shoulders of giants
 

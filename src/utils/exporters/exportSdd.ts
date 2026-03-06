@@ -9,6 +9,7 @@ export function saveSDD(fb: FramebufWithFont): string {
   const { framebuf, width, height, backgroundColor, borderColor, name } = fb;
   const isEcm = fb.ecmMode;
   const isMcm = fb.mcmMode;
+  const charset = fb.charset === 'lower' ? 'lower' : 'upper';
   const lines: string[] = [];
 
   lines.push('<?xml version="1.0" encoding="utf-8" standalone="yes"?>');
@@ -19,7 +20,7 @@ export function saveSDD(fb: FramebufWithFont): string {
   lines.push(`    <Columns>${width}</Columns>`);
   lines.push('    <Mode>0</Mode>');
   lines.push(`    <ScreenMode>${isMcm ? 1 : isEcm ? 2 : 0}</ScreenMode>`);
-  lines.push('    <CharacterSet />');
+  lines.push(`    <CharacterSet>${charset}</CharacterSet>`);
   lines.push('    <Screens>');
   lines.push('        <Screen>');
   lines.push(`            <BK1Colour>${isMcm ? (fb.mcmColor1 ?? 0) : 0}</BK1Colour>`);

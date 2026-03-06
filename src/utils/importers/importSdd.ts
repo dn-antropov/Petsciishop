@@ -1,6 +1,13 @@
 import { framebufFromJson } from '../../redux/workspace';
 import { Framebuf } from '../../redux/types';
 
+function parseCharset(raw: string | null | undefined): 'upper' | 'lower' {
+  const value = (raw ?? '').trim().toLowerCase();
+  if (!value) return 'upper';
+  if (value === '1' || value.includes('lower') || value.includes('small')) return 'lower';
+  return 'upper';
+}
+
 export function loadSDD(content: string): Framebuf[] {
   const parser = new DOMParser();
   const doc = parser.parseFromString(content, 'text/xml');
@@ -9,6 +16,7 @@ export function loadSDD(content: string): Framebuf[] {
   const screenMode = screenModeEl ? parseInt(screenModeEl.textContent ?? '0') : 0;
   const isExtended = screenMode === 2;
   const isMcm = screenMode === 1 || screenMode === 4;
+  const charset = parseCharset(doc.querySelector('CharacterSet')?.textContent);
 
   const screenEls = doc.querySelectorAll('Screen');
   const framebufs: Framebuf[] = [];
@@ -66,7 +74,7 @@ export function loadSDD(content: string): Framebuf[] {
       height,
       backgroundColor,
       borderColor,
-      charset: 'upper',
+      charset,
       name,
       framebuf: pixels,
     };

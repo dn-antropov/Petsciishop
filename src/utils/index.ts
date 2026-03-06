@@ -272,7 +272,7 @@ export function saveWorkspace(
   updateLastSavedSnapshot: () => void
 ) {
   const content = buildWorkspaceJson(screens, getFramebufById, cf);
-  downloadBlob(content, 'workspace.petmate', 'application/json');
+  downloadBlob(content, 'workspace.petsciishop', 'application/json');
   updateLastSavedSnapshot();
 }
 
@@ -334,7 +334,7 @@ export async function loadWorkspaceNoDialog(dispatch: StoreDispatch, content: st
 
 export async function dialogLoadWorkspace(dispatch: StoreDispatch) {
   try {
-    const { text, name } = await pickAndReadTextFile('.petmate');
+    const { text, name } = await pickAndReadTextFile('.petsciishop');
     const c = JSON.parse(text);
     dispatch(ReduxRoot.actions.openWorkspace(c, name));
   } catch (_e) {
@@ -350,9 +350,9 @@ export async function dialogSaveAsWorkspace(
   updateLastSavedSnapshot: () => void
 ) {
   const content = buildWorkspaceJson(screens, getFramebufByIndex, cf);
-  downloadBlob(content, 'workspace.petmate', 'application/json');
+  downloadBlob(content, 'workspace.petsciishop', 'application/json');
   updateLastSavedSnapshot();
-  setWorkspaceFilenameWithTitle(setWorkspaceFilename, 'workspace.petmate');
+  setWorkspaceFilenameWithTitle(setWorkspaceFilename, 'workspace.petsciishop');
 }
 
 export async function dialogExportFile(

@@ -113,7 +113,7 @@ export const actions = {
     return async (dispatch, getState) => {
       if (selectors.anyUnsavedChanges(getState())) {
         const proceed = await showConfirm(
-          'You have unsaved changes. Open a new file anyway?',
+          'You have unsaved changes. Open a different workspace anyway?',
           { okLabel: 'Open', cancelLabel: 'Cancel' }
         );
         if (!proceed) return;

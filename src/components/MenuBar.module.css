@@ -61,6 +61,15 @@
   background: rgba(255, 255, 255, 0.1);
 }
 
+.itemLabel {
+  white-space: nowrap;
+}
+
+.defaultTag {
+  color: #9a9a9a;
+  font-style: italic;
+}
+
 .accelerator {
   color: #888;
   font-size: 11px;

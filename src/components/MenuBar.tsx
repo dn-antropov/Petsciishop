@@ -7,6 +7,7 @@ import s from './MenuBar.module.css';
 
 interface MenuItemDef {
   label: string;
+  defaultTag?: boolean;
   cmd?: string;
   accelerator?: string;
   submenu?: MenuItemDef[];
@@ -24,14 +25,15 @@ function isSep(item: ItemDef): item is SeparatorDef {
 }
 
 const importers: MenuItemDef[] = [
+  { label: 'ScreenDesigner (.sdd)', defaultTag: true, cmd: 'import-sdd', accelerator: 'Ctrl+Shift+I' },
   { label: 'D64 disk image (.d64)', cmd: 'import-d64' },
   { label: 'PETSCII (.c)',           cmd: 'import-marq-c' },
-  { label: 'Screen Designer (.sdd)', cmd: 'import-sdd' },
   { label: 'SEQ (.seq)',             cmd: 'import-seq' },
   { label: 'Retro Debugger (.vce)', cmd: 'import-vce' },
 ];
 
 const exporters: MenuItemDef[] = [
+  { label: 'ScreenDesigner (.sdd)', defaultTag: true, cmd: 'export-sdd', accelerator: 'Ctrl+Shift+E' },
   { label: 'Assembler source (.asm)', cmd: 'export-asm' },
   { label: 'BASIC (.bas)',            cmd: 'export-basic' },
   { label: 'Executable (.prg)',       cmd: 'export-prg' },
@@ -41,7 +43,6 @@ const exporters: MenuItemDef[] = [
   { label: 'PNG (.png)',              cmd: 'export-png' },
   { label: 'SEQ (.seq)',              cmd: 'export-seq' },
   { label: 'PET (.pet)',              cmd: 'export-pet' },
-  { label: 'Screen Designer (.sdd)', cmd: 'export-sdd' },
 ];
 
 const petsciiCompo25Entries: MenuItemDef[] = [
@@ -87,16 +88,17 @@ const menuDefs: Array<{ label: string; items: ItemDef[] }> = [
       { label: 'New',           cmd: 'new',       accelerator: 'Ctrl+N' },
       { label: 'New Screen',    cmd: 'new-screen', accelerator: 'Ctrl+T' },
       { separator: true },
-      { label: 'Open...',       cmd: 'open',      accelerator: 'Ctrl+O' },
+      { label: 'Workspace', heading: true },
+      { label: 'Open...',    cmd: 'open',    accelerator: 'Ctrl+O' },
+      { label: 'Save',       cmd: 'save',    accelerator: 'Ctrl+S' },
+      { label: 'Save As...', cmd: 'save-as', accelerator: 'Ctrl+Shift+S' },
       { separator: true },
-      { label: 'Save',          cmd: 'save',      accelerator: 'Ctrl+S' },
-      { label: 'Save As...',    cmd: 'save-as',   accelerator: 'Ctrl+Shift+S' },
-      { label: 'Share URL',     cmd: 'share-url', accelerator: 'Ctrl+Shift+U' },
-      { separator: true },
-      { label: 'Convert Image...', cmd: 'convert-image' },
-      { separator: true },
+      { label: 'Current Screen', heading: true },
+      { label: 'Share via URL', cmd: 'share-url' },
       { label: 'Import',  submenu: importers },
       { label: 'Export As', submenu: exporters },
+      { separator: true },
+      { label: 'Convert bitmap image to PETSCII', cmd: 'convert-image' },
       { separator: true },
       { label: 'Fonts...',      cmd: 'custom-fonts' },
     ],
@@ -148,7 +150,10 @@ function Dropdown({ items, onCommand }: DropdownProps) {
             if (item.href) window.open(item.href, '_blank');
           }}
         >
-          <span>{item.label}</span>
+          <span className={s.itemLabel}>
+            {item.label}
+            {item.defaultTag && <span className={s.defaultTag}> default</span>}
+          </span>
           <span>
             {item.accelerator && <span className={s.accelerator}>{item.accelerator}</span>}
             {hasSubmenu && <span className={s.arrow}>▶</span>}

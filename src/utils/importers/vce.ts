@@ -61,6 +61,8 @@ export function loadVCE(content: Uint8Array): Framebuf[] {
   // Retro Debugger stores border/background in the inner VCE header.
   const borderColor = data[BORDER_COLOR_OFFSET] & 0x0F;
   const backgroundColor = data[BACKGROUND_COLOR_OFFSET] & 0x0F;
+  const charsetMode = data[MODE_FLAGS_OFFSET] ?? 0;
+  const charset = charsetMode === 1 ? 'lower' : 'upper';
 
   // NOTE: Petsciishop is currently a PETSCII editor (ROM charsets only).
   // This importer reads VCE screen codes + colors as PETSCII cells, but does
@@ -85,8 +87,8 @@ export function loadVCE(content: Uint8Array): Framebuf[] {
     height: 25,
     backgroundColor,
     borderColor,
-    // Keep imported VCE content in standard PETSCII space for now.
-    charset: 'upper',
+    // VCE mode 0/1 map to PETSCII ROM charset variants.
+    charset,
     framebuf,
   });
   return [result];
