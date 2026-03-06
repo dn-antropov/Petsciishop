@@ -50,7 +50,7 @@ const petsciiCompo25Entries: MenuItemDef[] = [
   { separator: true },
   { label: '01 The Three Graces', cmd: 'load-demo-sdd:petscii-compo-25/01_The_Three_Graces.sdd' },
   { label: '02 Future Proof', cmd: 'load-demo-sdd:petscii-compo-25/02_FutureProof.sdd' },
-  { label: '03 ATROTOS', cmd: 'load-demo-sdd:petscii-compo-25/03_ATROTOS.sdd' },
+  { label: '03 Ατρωτος', cmd: 'load-demo-sdd:petscii-compo-25/03_ATROTOS.sdd' },
   { label: '04 The Milkshake Man', cmd: 'load-demo-sdd:petscii-compo-25/04_TheMilkshakeManPet-msm.sdd' },
   { label: '05 Shady Chars', cmd: 'load-demo-sdd:petscii-compo-25/05_ShadyChars.sdd' },
   { label: '06 Missing Something', cmd: 'load-demo-sdd:petscii-compo-25/06_plain.sdd' },
@@ -200,6 +200,10 @@ function Dropdown({ items, onCommand, onRequestClose, menuIndex }: DropdownProps
             data-menu-item='true'
             role='menuitem'
             aria-haspopup={hasSubmenu ? 'menu' : undefined}
+            onMouseEnter={(e) => {
+              // Keep keyboard navigation aligned with the item currently highlighted by hover.
+              e.currentTarget.focus({ preventScroll: true });
+            }}
             onClick={(e) => {
               if (hasSubmenu) return;
               e.stopPropagation();

@@ -6,7 +6,7 @@
     <Columns>40</Columns>
     <Mode>0</Mode>
     <ScreenMode>0</ScreenMode>
-    <CharacterSet />
+    <CharacterSet>lower</CharacterSet>
     <Screens>
         <Screen>
             <BK1Colour>0</BK1Colour>

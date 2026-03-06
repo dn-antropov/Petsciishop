@@ -6,14 +6,14 @@
     <Columns>40</Columns>
     <Mode>0</Mode>
     <ScreenMode>0</ScreenMode>
-    <CharacterSet />
+    <CharacterSet>upper</CharacterSet>
     <Screens>
         <Screen>
             <BK1Colour>0</BK1Colour>
             <BK2Colour>0</BK2Colour>
             <M3Colour>0</M3Colour>
             <BackgroundColour>1</BackgroundColour>
-            <BorderColour>14</BorderColour>
+            <BorderColour>5</BorderColour>
             <D021Colour>1</D021Colour>
             <D022Colour>0</D022Colour>
             <D023Colour>0</D023Colour>
