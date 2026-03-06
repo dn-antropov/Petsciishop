@@ -85,6 +85,25 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
     }
   }, [isFullscreen]);
 
+  // Double-tap to toggle fullscreen (works in and out of fullscreen)
+  useEffect(() => {
+    const el = canvasWrapRef.current;
+    if (!el) return;
+    let lastTap = 0;
+    const onTap = (e: TouchEvent) => {
+      if (e.touches.length !== 0 || e.changedTouches.length !== 1) return;
+      const now = Date.now();
+      if (now - lastTap < 300) {
+        toggleFullscreen();
+        lastTap = 0;
+      } else {
+        lastTap = now;
+      }
+    };
+    el.addEventListener('touchend', onTap);
+    return () => el.removeEventListener('touchend', onTap);
+  }, [isFullscreen]);
+
   useEffect(() => {
     const el = canvasWrapRef.current;
     if (!el || !isFullscreen) {
@@ -167,19 +186,8 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
       e.preventDefault();
     };
 
-    const onTouchEnd = (e: TouchEvent) => {
-      if (gestureRef.current.active) {
-        gestureRef.current.active = false;
-        return;
-      }
-      // Double-tap to exit fullscreen (single finger only)
-      if (e.touches.length === 0 && e.changedTouches.length === 1) {
-        const now = Date.now();
-        if (now - gestureRef.current.lastTapTime < 300) {
-          document.exitFullscreen();
-        }
-        gestureRef.current.lastTapTime = now;
-      }
+    const onTouchEnd = () => {
+      gestureRef.current.active = false;
     };
 
     // Mouse drag for desktop
@@ -290,7 +298,7 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
           {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
         </button>
       </div>
-      <div ref={canvasWrapRef} className={s.canvasWrap} onDoubleClick={isFullscreen ? toggleFullscreen : undefined}>
+      <div ref={canvasWrapRef} className={s.canvasWrap} onDoubleClick={toggleFullscreen}>
         <canvas
           ref={canvasRef}
           className={canvasClass}
