@@ -45,7 +45,7 @@ const exporters: MenuItemDef[] = [
 ];
 
 const petsciiCompo25Entries: MenuItemDef[] = [
-  { label: '01 Graces', cmd: 'load-demo-sdd:petscii-compo-25/01_graces.sdd' },
+  { label: '01 The Three Graces', cmd: 'load-demo-sdd:petscii-compo-25/01_The_Three_Graces.sdd' },
   { label: '02 Future Proof', cmd: 'load-demo-sdd:petscii-compo-25/02_FutureProof.sdd' },
   { label: '03 ATROTOS', cmd: 'load-demo-sdd:petscii-compo-25/03_ATROTOS.sdd' },
   { label: '04 The Milkshake Man', cmd: 'load-demo-sdd:petscii-compo-25/04_TheMilkshakeManPet-msm.sdd' },
@@ -76,7 +76,7 @@ const menuDefs: Array<{ label: string; items: ItemDef[] }> = [
       { label: 'Demo', submenu: [
         { label: 'Petsciishop Logo', cmd: 'load-demo-logo' },
         { label: 'The Three Graces', cmd: 'load-demo-three-graces' },
-        { label: "PETSCII Compo '25", submenu: petsciiCompo25Entries },
+        { label: "PETSCII Como '25", submenu: petsciiCompo25Entries },
       ]},
     ],
   },
