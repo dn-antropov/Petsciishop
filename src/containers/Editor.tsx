@@ -844,7 +844,6 @@ class FramebufferView extends Component<FramebufferViewProps & FramebufferViewDi
 function computeFramebufLayout(args: {
   containerSize: { width: number, height: number },
   framebufSize: { charWidth: number, charHeight: number },
-  canvasFit: FramebufUIState['canvasFit']
 }) {
   const bottomPad = 60;
   const rightPad = 320;
@@ -859,19 +858,12 @@ function computeFramebufLayout(args: {
   let divWidth = canvasWidth * ws;
   let divHeight = canvasHeight * ws;
 
-  const fitWidth = args.canvasFit == 'fitWidth';
-  if (fitWidth) {
-    if (divHeight > maxHeight) {
-      divHeight = maxHeight;
-    }
-  } else {
-    // If height is now larger than what we can fit in vertically, scale further
-    if (divHeight > maxHeight) {
-      const s = maxHeight  / divHeight;
-      divWidth *= s;
-      divHeight *= s;
-      ws *= s;
-    }
+  // If height is now larger than what we can fit in vertically, scale further
+  if (divHeight > maxHeight) {
+    const s = maxHeight  / divHeight;
+    divWidth *= s;
+    divHeight *= s;
+    ws *= s;
   }
 
   return {
@@ -1141,7 +1133,6 @@ class Editor extends Component<EditorProps & EditorDispatch, EditorState> {
         charWidth: this.props.framebuf.width,
         charHeight: this.props.framebuf.height
       },
-      canvasFit: this.props.framebufUIState.canvasFit
     });
 
     const { crtFilter } = this.props;
