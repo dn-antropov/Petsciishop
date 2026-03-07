@@ -287,14 +287,20 @@ function countPaletteColors(
 
 // --- Cell Complexity (for background search weighting) ---
 
+interface CellComplexityData {
+  weights: Float64Array;
+  rankedIndices: Int32Array;
+}
+
 function computeCellComplexity(
   srcData: Uint8ClampedArray,
   settings: ConverterSettings
-): Float64Array {
+): CellComplexityData {
   const weights = new Float64Array(1000);
   const variances = new Float64Array(1000);
   let maxVariance = 0;
   const BACKGROUND_MASK_TOP_FRACTION = 0.15;
+  const rankedIndices = new Int32Array(1000);
 
   for (let cy = 0; cy < 25; cy++) {
     for (let cx = 0; cx < 40; cx++) {
@@ -327,6 +333,7 @@ function computeCellComplexity(
   if (maxVariance > 0) {
     const order = Array.from({ length: 1000 }, (_, i) => i);
     order.sort((a, b) => variances[b] - variances[a]);
+    rankedIndices.set(order);
     weights.fill(0.0);
     const maskFraction = maxVariance < 5000 ? 0.10 : BACKGROUND_MASK_TOP_FRACTION;
     const keepCount = Math.max(1, Math.round(1000 * maskFraction));
@@ -336,9 +343,10 @@ function computeCellComplexity(
     if (weights[order[0]] === 0) weights[order[0]] = 1.0;
   } else {
     weights.fill(1.0);
+    for (let i = 0; i < rankedIndices.length; i++) rankedIndices[i] = i;
   }
 
-  return weights;
+  return { weights, rankedIndices };
 }
 
 // --- Core PETSCII Character Matching ---
@@ -356,13 +364,48 @@ interface PreparedCellData {
   chunkBv: Float64Array;
   weights: Float64Array;
   srcAvgL: number;
+  mcmL?: Float64Array;
+  mcmA?: Float64Array;
+  mcmBv?: Float64Array;
+  mcmWeights?: Float64Array;
+}
+
+interface PaletteLabArrays {
+  pL: Float64Array;
+  pA: Float64Array;
+  pB: Float64Array;
+}
+
+function buildPaletteLabArrays(palette: PaletteColor[]): PaletteLabArrays {
+  const pL = new Float64Array(16);
+  const pA = new Float64Array(16);
+  const pB = new Float64Array(16);
+  for (let i = 0; i < 16; i++) {
+    pL[i] = palette[i].L;
+    pA[i] = palette[i].a;
+    pB[i] = palette[i].B;
+  }
+  return { pL, pA, pB };
+}
+
+function buildRefSetCount(ref: boolean[][]): Int32Array {
+  const refSetCount = new Int32Array(ref.length);
+  for (let ch = 0; ch < ref.length; ch++) {
+    let n = 0;
+    for (let p = 0; p < 64; p++) {
+      if (ref[ch][p]) n++;
+    }
+    refSetCount[ch] = n;
+  }
+  return refSetCount;
 }
 
 function prepareCellData(
   srcData: Uint8ClampedArray,
   cx: number,
   cy: number,
-  settings: ConverterSettings
+  settings: ConverterSettings,
+  includeMcm: boolean
 ): PreparedCellData {
   const chunkR = new Float64Array(64);
   const chunkG = new Float64Array(64);
@@ -440,18 +483,81 @@ function prepareCellData(
   for (let p = 0; p < 64; p++) srcAvgL += chunkL[p];
   srcAvgL /= 64;
 
-  return { chunkL, chunkA, chunkBv, weights, srcAvgL };
+  if (!includeMcm) {
+    return { chunkL, chunkA, chunkBv, weights, srcAvgL };
+  }
+
+  const mcmL = new Float64Array(32);
+  const mcmA = new Float64Array(32);
+  const mcmBv = new Float64Array(32);
+  const mcmWeights = new Float64Array(32);
+  for (let py = 0; py < 8; py++) {
+    for (let mpx = 0; mpx < 4; mpx++) {
+      const p0 = py * 8 + mpx * 2;
+      const p1 = p0 + 1;
+      const mi = py * 4 + mpx;
+      mcmL[mi] = (chunkL[p0] + chunkL[p1]) * 0.5;
+      mcmA[mi] = (chunkA[p0] + chunkA[p1]) * 0.5;
+      mcmBv[mi] = (chunkBv[p0] + chunkBv[p1]) * 0.5;
+      mcmWeights[mi] = (weights[p0] + weights[p1]) * 0.5;
+    }
+  }
+
+  return { chunkL, chunkA, chunkBv, weights, srcAvgL, mcmL, mcmA, mcmBv, mcmWeights };
+}
+
+function buildPreparedCells(
+  srcData: Uint8ClampedArray,
+  settings: ConverterSettings,
+  includeMcm: boolean
+): PreparedCellData[] {
+  const preparedCells = new Array<PreparedCellData>(1000);
+  for (let cy = 0; cy < 25; cy++) {
+    for (let cx = 0; cx < 40; cx++) {
+      const idx = cy * 40 + cx;
+      preparedCells[idx] = prepareCellData(srcData, cx, cy, settings, includeMcm);
+    }
+  }
+  return preparedCells;
+}
+
+function buildSampleCellWeights(
+  cellWeights: Float64Array,
+  rankedIndices: Int32Array,
+  sampleCount: number
+): Float64Array {
+  const sampleWeights = new Float64Array(cellWeights.length);
+  let selected = 0;
+
+  for (let i = 0; i < rankedIndices.length && selected < sampleCount; i++) {
+    const idx = rankedIndices[i];
+    if (cellWeights[idx] > 0) {
+      sampleWeights[idx] = cellWeights[idx];
+      selected++;
+    }
+  }
+
+  if (selected === 0) {
+    const fallbackCount = Math.min(sampleCount, rankedIndices.length);
+    for (let i = 0; i < fallbackCount; i++) {
+      sampleWeights[rankedIndices[i]] = 1.0;
+    }
+  }
+
+  return sampleWeights;
 }
 
 function findOptimalPetscii(
   mode: 'standard' | 'ecm',
-  srcData: Uint8ClampedArray,
-  palette: PaletteColor[],
+  preparedCells: PreparedCellData[],
+  paletteLab: PaletteLabArrays,
   ref: boolean[][],
+  refSetCount: Int32Array,
   bgOverride: number | undefined,
   ecmBgs: number[],
   settings: ConverterSettings,
-  cellWeights: Float64Array | null
+  cellWeights: Float64Array | null,
+  skipZeroWeightCells: boolean = false
 ): PetsciiResult {
   const screencodes: number[] = [];
   const colors: number[] = [];
@@ -460,24 +566,7 @@ function findOptimalPetscii(
 
   const charLimit = mode === 'ecm' ? 64 : ref.length;
   const REPEAT_PENALTY = 50.0;
-
-  // Precompute palette Lab as flat arrays for fast access
-  const pL = new Float64Array(16);
-  const pA = new Float64Array(16);
-  const pB = new Float64Array(16);
-  for (let i = 0; i < 16; i++) {
-    pL[i] = palette[i].L;
-    pA[i] = palette[i].a;
-    pB[i] = palette[i].B;
-  }
-
-  // Precompute set-pixel count per character
-  const refSetCount = new Int32Array(charLimit);
-  for (let ch = 0; ch < charLimit; ch++) {
-    let n = 0;
-    for (let p = 0; p < 64; p++) { if (ref[ch][p]) n++; }
-    refSetCount[ch] = n;
-  }
+  const { pL, pA, pB } = paletteLab;
 
   const prevRow = new Int32Array(40).fill(-1);
   const currRow = new Int32Array(40).fill(-1);
@@ -487,7 +576,11 @@ function findOptimalPetscii(
     currRow.fill(-1);
 
     for (let cx = 0; cx < 40; cx++) {
-      const { chunkL, chunkA, chunkBv, weights, srcAvgL } = prepareCellData(srcData, cx, cy, settings);
+      const cellIdx = cy * 40 + cx;
+      if (skipZeroWeightCells && cellWeights && cellWeights[cellIdx] === 0) {
+        continue;
+      }
+      const { chunkL, chunkA, chunkBv, weights, srcAvgL } = preparedCells[cellIdx];
 
       // Background candidates
       let bgCandidates: number[];
@@ -562,7 +655,7 @@ function findOptimalPetscii(
         }
       }
 
-      totalError += (cellWeights ? cellWeights[cy * 40 + cx] : 1) * bestError;
+      totalError += (cellWeights ? cellWeights[cellIdx] : 1) * bestError;
       currRow[cx] = bestChar;
 
       screencodes.push(bestChar);
@@ -575,9 +668,10 @@ function findOptimalPetscii(
 }
 
 function findOptimalPetsciiMcm(
-  srcData: Uint8ClampedArray,
-  palette: PaletteColor[],
+  preparedCells: PreparedCellData[],
+  paletteLab: PaletteLabArrays,
   ref: boolean[][],
+  refSetCount: Int32Array,
   refMcm: Uint8Array[],
   refMcmBpCount: Int32Array[],
   mcmBg: number,
@@ -591,24 +685,7 @@ function findOptimalPetsciiMcm(
   const colors = new Array<number>(1000).fill(0);
   const bgIndices: number[] = [];
   let totalError = 0;
-
-  const pL = new Float64Array(16);
-  const pA = new Float64Array(16);
-  const pB = new Float64Array(16);
-  for (let i = 0; i < 16; i++) {
-    pL[i] = palette[i].L;
-    pA[i] = palette[i].a;
-    pB[i] = palette[i].B;
-  }
-
-  const refSetCount = new Int32Array(ref.length);
-  for (let ch = 0; ch < ref.length; ch++) {
-    let n = 0;
-    for (let p = 0; p < 64; p++) {
-      if (ref[ch][p]) n++;
-    }
-    refSetCount[ch] = n;
-  }
+  const { pL, pA, pB } = paletteLab;
 
   const REPEAT_PENALTY = 50.0;
   const useRepeatPenalty = !disableRepeatPenalty;
@@ -625,23 +702,7 @@ function findOptimalPetsciiMcm(
         continue;
       }
 
-      const { chunkL, chunkA, chunkBv, weights, srcAvgL } = prepareCellData(srcData, cx, cy, settings);
-
-      const mcmL = new Float64Array(32);
-      const mcmA = new Float64Array(32);
-      const mcmB = new Float64Array(32);
-      const mcmW = new Float64Array(32);
-      for (let py = 0; py < 8; py++) {
-        for (let mpx = 0; mpx < 4; mpx++) {
-          const p0 = py * 8 + mpx * 2;
-          const p1 = p0 + 1;
-          const mi = py * 4 + mpx;
-          mcmL[mi] = (chunkL[p0] + chunkL[p1]) * 0.5;
-          mcmA[mi] = (chunkA[p0] + chunkA[p1]) * 0.5;
-          mcmB[mi] = (chunkBv[p0] + chunkBv[p1]) * 0.5;
-          mcmW[mi] = (weights[p0] + weights[p1]) * 0.5;
-        }
-      }
+      const { chunkL, chunkA, chunkBv, weights, srcAvgL, mcmL, mcmA, mcmBv, mcmWeights } = preparedCells[cellIdx];
 
       let bestMcmErr = Infinity;
       let bestMcmChar = 0;
@@ -656,10 +717,10 @@ function findOptimalPetsciiMcm(
           const bitPair = bits[p];
           if (bitPair === 3) continue;
           const col = bitPair === 0 ? mcmBg : bitPair === 1 ? mcmMc1 : mcmMc2;
-          const dL = mcmL[p] - pL[col];
-          const da = mcmA[p] - pA[col];
-          const db = mcmB[p] - pB[col];
-          fixedErr += mcmW[p] * (dL * dL + da * da + db * db);
+          const dL = mcmL![p] - pL[col];
+          const da = mcmA![p] - pA[col];
+          const db = mcmBv![p] - pB[col];
+          fixedErr += mcmWeights![p] * (dL * dL + da * da + db * db);
         }
 
         if (2 * fixedErr >= bestMcmErr) continue;
@@ -668,10 +729,10 @@ function findOptimalPetsciiMcm(
           let fgErr = 0;
           for (let p = 0; p < 32; p++) {
             if (bits[p] !== 3) continue;
-            const dL = mcmL[p] - pL[fg];
-            const da = mcmA[p] - pA[fg];
-            const db = mcmB[p] - pB[fg];
-            fgErr += mcmW[p] * (dL * dL + da * da + db * db);
+            const dL = mcmL![p] - pL[fg];
+            const da = mcmA![p] - pA[fg];
+            const db = mcmBv![p] - pB[fg];
+            fgErr += mcmWeights![p] * (dL * dL + da * da + db * db);
           }
 
           const colorErr = 2 * (fixedErr + fgErr);
@@ -794,19 +855,23 @@ function fallbackMcmGlobals(bestBg: number): { mcmBg: number; mcmMc1: number; mc
 }
 
 async function findOptimalMcmGlobalColors(
-  srcData: Uint8ClampedArray,
-  palette: PaletteColor[],
+  preparedCells: PreparedCellData[],
+  paletteLab: PaletteLabArrays,
   ref: boolean[][],
+  refSetCount: Int32Array,
   refMcm: Uint8Array[],
   refMcmBpCount: Int32Array[],
   colorCounts: number[],
   bestBg: number,
   settings: ConverterSettings,
   cellWeights: Float64Array,
+  rankedIndices: Int32Array,
   onProgress: ProgressCallback,
   progressStart: number,
   progressSpan: number
 ): Promise<{ mcmBg: number; mcmMc1: number; mcmMc2: number }> {
+  const MCM_COARSE_SAMPLE_SIZE = 48;
+  const MCM_FINALIST_COUNT = 24;
   const candidates = buildMcmShortlist(colorCounts, bestBg);
   const triples: [number, number, number][] = [];
   for (let i = 0; i < candidates.length; i++) {
@@ -823,21 +888,62 @@ async function findOptimalMcmGlobalColors(
     return fallbackMcmGlobals(bestBg);
   }
 
-  let best = triples[0];
+  const finalists = new Array<{ triple: [number, number, number]; totalError: number }>();
+  if (triples.length > MCM_FINALIST_COUNT) {
+    const sampleWeights = buildSampleCellWeights(cellWeights, rankedIndices, MCM_COARSE_SAMPLE_SIZE);
+    const coarseSpan = Math.max(1, Math.round(progressSpan * 0.65));
+    for (let idx = 0; idx < triples.length; idx++) {
+      const triple = triples[idx];
+      const pct = progressStart + Math.round((idx / triples.length) * coarseSpan);
+      onProgress(
+        'MCM globals',
+        `Coarse ${idx + 1} of ${triples.length} (bg=${triple[0]}, mc1=${triple[1]}, mc2=${triple[2]})`,
+        pct
+      );
+      await yieldToUI();
+      const result = findOptimalPetsciiMcm(
+        preparedCells,
+        paletteLab,
+        ref,
+        refSetCount,
+        refMcm,
+        refMcmBpCount,
+        triple[0],
+        triple[1],
+        triple[2],
+        settings,
+        sampleWeights,
+        true
+      );
+      finalists.push({ triple, totalError: result.totalError });
+    }
+
+    finalists.sort((a, b) => a.totalError - b.totalError);
+    finalists.length = Math.min(MCM_FINALIST_COUNT, finalists.length);
+  } else {
+    for (let idx = 0; idx < triples.length; idx++) {
+      finalists.push({ triple: triples[idx], totalError: Infinity });
+    }
+  }
+
+  let best = finalists[0].triple;
   let bestErr = Infinity;
-  for (let idx = 0; idx < triples.length; idx++) {
-    const triple = triples[idx];
-    const pct = progressStart + Math.round((idx / triples.length) * progressSpan);
+  const coarseSpan = triples.length > MCM_FINALIST_COUNT ? Math.max(1, Math.round(progressSpan * 0.65)) : 0;
+  const refineSpan = progressSpan - coarseSpan;
+  for (let idx = 0; idx < finalists.length; idx++) {
+    const triple = finalists[idx].triple;
+    const pct = progressStart + coarseSpan + Math.round((idx / finalists.length) * Math.max(refineSpan, 1));
     onProgress(
       'MCM globals',
-      `${idx + 1} of ${triples.length} (bg=${triple[0]}, mc1=${triple[1]}, mc2=${triple[2]})`,
+      `Refine ${idx + 1} of ${finalists.length} (bg=${triple[0]}, mc1=${triple[1]}, mc2=${triple[2]})`,
       pct
     );
     await yieldToUI();
     const result = findOptimalPetsciiMcm(
-      srcData,
-      palette,
+      preparedCells,
+      paletteLab,
       ref,
+      refSetCount,
       refMcm,
       refMcmBpCount,
       triple[0],
@@ -967,11 +1073,15 @@ export async function convertImage(
 ): Promise<ConversionOutputs> {
   const paletteData = PALETTES.find(p => p.id === settings.paletteId) || PALETTES[0];
   const palette = buildPaletteColors(paletteData.hex);
+  const paletteLab = buildPaletteLabArrays(palette);
   const ref = buildRefChars(fontBits);
-  const { refMcm, refMcmBpCount } = buildRefMcmData(ref);
+  const refSetCount = buildRefSetCount(ref);
   const renderStandard = settings.outputStandard;
   const renderEcm = settings.outputEcm;
   const renderMcm = settings.outputMcm;
+  const mcmReferenceData = renderMcm ? buildRefMcmData(ref) : null;
+  const refMcm = mcmReferenceData?.refMcm;
+  const refMcmBpCount = mcmReferenceData?.refMcmBpCount;
 
   // Step 1: Resize image to 320×200
   onProgress('Resizing', 'Preparing canvas...', 0);
@@ -989,11 +1099,18 @@ export async function convertImage(
 
   const needsCellWeights = settings.manualBgColor === null || renderMcm;
   let cellWeights: Float64Array | null = null;
+  let rankedIndices: Int32Array | null = null;
   if (needsCellWeights) {
     onProgress('Analyzing', 'Computing cell complexity...', 10);
     await yieldToUI();
-    cellWeights = computeCellComplexity(srcData, settings);
+    const complexity = computeCellComplexity(srcData, settings);
+    cellWeights = complexity.weights;
+    rankedIndices = complexity.rankedIndices;
   }
+
+  onProgress('Analyzing', 'Preparing cell data...', 12);
+  await yieldToUI();
+  const preparedCells = buildPreparedCells(srcData, settings, renderMcm);
 
   // Step 4: Find optimal background color
   let bestBg: number;
@@ -1007,7 +1124,7 @@ export async function convertImage(
       onProgress('Background', `Testing ${candidate + 1} of 16...`, 15 + Math.round((candidate / 16) * 25));
       await yieldToUI();
       const result = findOptimalPetscii(
-        'standard', srcData, palette, ref, candidate, [], settings, cellWeights
+        'standard', preparedCells, paletteLab, ref, refSetCount, candidate, [], settings, cellWeights, true
       );
       if (result.totalError < bestErr) {
         bestErr = result.totalError;
@@ -1037,17 +1154,19 @@ export async function convertImage(
   let mcmBg: number | undefined;
   let mcmMc1: number | undefined;
   let mcmMc2: number | undefined;
-  if (renderMcm) {
+  if (renderMcm && refMcm && refMcmBpCount && cellWeights && rankedIndices) {
     const globals = await findOptimalMcmGlobalColors(
-      srcData,
-      palette,
+      preparedCells,
+      paletteLab,
       ref,
+      refSetCount,
       refMcm,
       refMcmBpCount,
       colorCounts,
       bestBg,
       settings,
-      cellWeights!,
+      cellWeights,
+      rankedIndices,
       onProgress,
       40,
       20
@@ -1065,7 +1184,7 @@ export async function convertImage(
     onProgress('Converting', 'Standard mode (256 chars)...', 60);
     await yieldToUI();
     stdResult = findOptimalPetscii(
-      'standard', srcData, palette, ref, bestBg, [], settings, null
+      'standard', preparedCells, paletteLab, ref, refSetCount, bestBg, [], settings, null
     );
   }
 
@@ -1073,17 +1192,18 @@ export async function convertImage(
     onProgress('Converting', 'ECM mode (64 chars, 4 backgrounds)...', 74);
     await yieldToUI();
     ecmResult = findOptimalPetscii(
-      'ecm', srcData, palette, ref, undefined, ecmBgs, settings, null
+      'ecm', preparedCells, paletteLab, ref, refSetCount, undefined, ecmBgs, settings, null
     );
   }
 
-  if (renderMcm) {
+  if (renderMcm && refMcm && refMcmBpCount) {
     onProgress('Converting', 'MCM mode (mixed hires/multicolor)...', 86);
     await yieldToUI();
     mcmResult = findOptimalPetsciiMcm(
-      srcData,
-      palette,
+      preparedCells,
+      paletteLab,
       ref,
+      refSetCount,
       refMcm,
       refMcmBpCount,
       mcmBg!,
@@ -1123,7 +1243,7 @@ export async function convertImage(
     };
     outputs.previewEcm = renderPreview(ecmResult, palette, ref, bestBg, ecmBgs, 'ecm');
   }
-  if (mcmResult && mcmBg !== undefined && mcmMc1 !== undefined && mcmMc2 !== undefined) {
+  if (mcmResult && refMcm && mcmBg !== undefined && mcmMc1 !== undefined && mcmMc2 !== undefined) {
     outputs.mcm = {
       screencodes: mcmResult.screencodes,
       colors: mcmResult.colors,
