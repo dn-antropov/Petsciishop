@@ -285,11 +285,20 @@
   font-size: 13px;
 }
 
+.previewSurface {
+  position: relative;
+  width: 100%;
+  max-width: 320px;
+  margin: 0 auto;
+  overflow: hidden;
+}
+
 .previewCanvas {
   display: block;
   width: 100%;
   max-width: 320px;
   margin: 0 auto;
+  box-sizing: border-box;
   image-rendering: pixelated;
   border: 1px solid #555;
   background: #111;
@@ -307,6 +316,18 @@
   box-sizing: border-box;
   border: 1px dashed #666;
   background: #1b1b1b;
+}
+
+.previewOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+  background: rgba(17, 17, 17, 0.82);
+  border: 1px solid rgba(120, 120, 120, 0.65);
 }
 
 .previewPlaceholderInner {

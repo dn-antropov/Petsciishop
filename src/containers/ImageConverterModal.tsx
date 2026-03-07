@@ -101,6 +101,35 @@ function resultToFramebuf(result: ConversionResult): Framebuf {
 
 type ConverterModeKey = 'outputStandard' | 'outputEcm' | 'outputMcm';
 type PreviewMode = 'standard' | 'ecm' | 'mcm';
+type PreviewSignatures = Partial<Record<PreviewMode, string>>;
+
+function buildPreviewSignature(
+  mode: PreviewMode,
+  settings: ConverterSettings,
+  sourceVersion: number
+): string {
+  return JSON.stringify({
+    mode,
+    sourceVersion,
+    brightnessFactor: settings.brightnessFactor,
+    saturationFactor: settings.saturationFactor,
+    saliencyAlpha: settings.saliencyAlpha,
+    lumMatchWeight: settings.lumMatchWeight,
+    paletteId: settings.paletteId,
+    manualBgColor: settings.manualBgColor,
+  });
+}
+
+function buildPreviewSignatures(
+  settings: ConverterSettings,
+  sourceVersion: number
+): PreviewSignatures {
+  return {
+    standard: buildPreviewSignature('standard', settings, sourceVersion),
+    ecm: buildPreviewSignature('ecm', settings, sourceVersion),
+    mcm: buildPreviewSignature('mcm', settings, sourceVersion),
+  };
+}
 
 function getPendingPreviewState(
   mode: PreviewMode,
@@ -158,9 +187,11 @@ export default function ImageConverterModal() {
   const [settings, setSettings] = useState<ConverterSettings>(loadSettings);
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [fileName, setFileName] = useState<string>('');
+  const [sourceVersion, setSourceVersion] = useState(0);
   const [converting, setConverting] = useState(false);
   const [progress, setProgress] = useState({ stage: '', detail: '', pct: 0 });
   const [results, setResults] = useState<ConversionOutputs | null>(null);
+  const [resultSignatures, setResultSignatures] = useState<PreviewSignatures>({});
 
   const stdCanvasRef = useRef<HTMLCanvasElement>(null);
   const ecmCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -189,7 +220,9 @@ export default function ImageConverterModal() {
     }
     setImage(null);
     setFileName('');
+    setSourceVersion(0);
     setResults(null);
+    setResultSignatures({});
     setProgress({ stage: '', detail: '', pct: 0 });
     setConverting(false);
     setSettings(prev => resetOutputModes(prev));
@@ -208,13 +241,13 @@ export default function ImageConverterModal() {
     if (convertTimeoutRef.current) clearTimeout(convertTimeoutRef.current);
 
     convertTimeoutRef.current = setTimeout(() => {
-      doConversion(image, settings);
+      doConversion(image, settings, sourceVersion);
     }, 300);
 
     return () => {
       if (convertTimeoutRef.current) clearTimeout(convertTimeoutRef.current);
     };
-  }, [image, settings, show]);
+  }, [image, settings, show, sourceVersion]);
 
   // Draw previews when results change
   useEffect(() => {
@@ -230,7 +263,7 @@ export default function ImageConverterModal() {
     }
   }, [results]);
 
-  const doConversion = useCallback(async (img: HTMLImageElement, s: ConverterSettings) => {
+  const doConversion = useCallback(async (img: HTMLImageElement, s: ConverterSettings, sourceVersionValue: number) => {
     if (fontBitsRef.current.length === 0) {
       try {
         fontBitsRef.current = getROMFontBits('upper').bits;
@@ -249,6 +282,11 @@ export default function ImageConverterModal() {
         return;
       }
       setResults(output);
+      setResultSignatures({
+        standard: output.standard ? buildPreviewSignature('standard', s, sourceVersionValue) : undefined,
+        ecm: output.ecm ? buildPreviewSignature('ecm', s, sourceVersionValue) : undefined,
+        mcm: output.mcm ? buildPreviewSignature('mcm', s, sourceVersionValue) : undefined,
+      });
     } catch (err) {
       console.error('Conversion failed:', err);
     } finally {
@@ -263,6 +301,7 @@ export default function ImageConverterModal() {
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
+        setSourceVersion(prev => prev + 1);
         setImage(img);
         setFileName(file.name.replace(/\.[^.]+$/, ''));
       };
@@ -354,9 +393,13 @@ export default function ImageConverterModal() {
   );
 
   const activePalette = PALETTES.find(p => p.id === settings.paletteId) || PALETTES[0];
+  const currentSignatures = buildPreviewSignatures(settings, sourceVersion);
   const showStandardPreview = Boolean(results?.standard) || Boolean(image && settings.outputStandard);
   const showEcmPreview = Boolean(results?.ecm) || Boolean(image && settings.outputEcm);
   const showMcmPreview = Boolean(results?.mcm) || Boolean(image && settings.outputMcm);
+  const standardStale = Boolean(results?.standard && resultSignatures.standard !== currentSignatures.standard);
+  const ecmStale = Boolean(results?.ecm && resultSignatures.ecm !== currentSignatures.ecm);
+  const mcmStale = Boolean(results?.mcm && resultSignatures.mcm !== currentSignatures.mcm);
   const standardPending = getPendingPreviewState('standard', converting, progress);
   const ecmPending = getPendingPreviewState('ecm', converting, progress);
   const mcmPending = getPendingPreviewState('mcm', converting, progress);
@@ -537,18 +580,33 @@ export default function ImageConverterModal() {
               <h4>Standard (256 chars)</h4>
               {results?.standard ? (
                 <>
-                  <canvas
-                    ref={stdCanvasRef}
-                    width={320}
-                    height={200}
-                    className={styles.previewCanvas}
-                  />
+                  <div className={styles.previewSurface}>
+                    <canvas
+                      ref={stdCanvasRef}
+                      width={320}
+                      height={200}
+                      className={styles.previewCanvas}
+                    />
+                    {standardStale && (
+                      <div className={styles.previewOverlay}>
+                        <div className={styles.previewPlaceholderInner}>
+                          <div className={styles.previewPlaceholderLabel}>{standardPending.label}</div>
+                          <div className={styles.previewPlaceholderDetail}>{standardPending.detail}</div>
+                          <div className={styles.previewPlaceholderBar}>
+                            <div className={styles.previewPlaceholderFill} style={{ width: `${standardPending.pct}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <button
                     className={styles.importBtn}
+                    disabled={standardStale}
                     onClick={() => handleImport(results.standard)}
                   >Import Standard</button>
                 </>
               ) : (
+                <div className={styles.previewSurface}>
                 <div className={styles.previewPlaceholder}>
                   <div className={styles.previewPlaceholderInner}>
                     <div className={styles.previewPlaceholderLabel}>{standardPending.label}</div>
@@ -558,6 +616,7 @@ export default function ImageConverterModal() {
                     </div>
                   </div>
                 </div>
+                </div>
               )}
             </div>
             )}
@@ -566,18 +625,33 @@ export default function ImageConverterModal() {
               <h4>ECM (64 chars, 4 bg)</h4>
               {results?.ecm ? (
                 <>
-                  <canvas
-                    ref={ecmCanvasRef}
-                    width={320}
-                    height={200}
-                    className={styles.previewCanvas}
-                  />
+                  <div className={styles.previewSurface}>
+                    <canvas
+                      ref={ecmCanvasRef}
+                      width={320}
+                      height={200}
+                      className={styles.previewCanvas}
+                    />
+                    {ecmStale && (
+                      <div className={styles.previewOverlay}>
+                        <div className={styles.previewPlaceholderInner}>
+                          <div className={styles.previewPlaceholderLabel}>{ecmPending.label}</div>
+                          <div className={styles.previewPlaceholderDetail}>{ecmPending.detail}</div>
+                          <div className={styles.previewPlaceholderBar}>
+                            <div className={styles.previewPlaceholderFill} style={{ width: `${ecmPending.pct}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <button
                     className={styles.importBtn}
+                    disabled={ecmStale}
                     onClick={() => handleImport(results.ecm)}
                   >Import ECM</button>
                 </>
               ) : (
+                <div className={styles.previewSurface}>
                 <div className={styles.previewPlaceholder}>
                   <div className={styles.previewPlaceholderInner}>
                     <div className={styles.previewPlaceholderLabel}>{ecmPending.label}</div>
@@ -587,6 +661,7 @@ export default function ImageConverterModal() {
                     </div>
                   </div>
                 </div>
+                </div>
               )}
             </div>
             )}
@@ -595,14 +670,28 @@ export default function ImageConverterModal() {
               <h4>MCM (mixed hires + multicolor)</h4>
               {results?.mcm ? (
                 <>
-                  <canvas
-                    ref={mcmCanvasRef}
-                    width={320}
-                    height={200}
-                    className={styles.previewCanvas}
-                  />
+                  <div className={styles.previewSurface}>
+                    <canvas
+                      ref={mcmCanvasRef}
+                      width={320}
+                      height={200}
+                      className={styles.previewCanvas}
+                    />
+                    {mcmStale && (
+                      <div className={styles.previewOverlay}>
+                        <div className={styles.previewPlaceholderInner}>
+                          <div className={styles.previewPlaceholderLabel}>{mcmPending.label}</div>
+                          <div className={styles.previewPlaceholderDetail}>{mcmPending.detail}</div>
+                          <div className={styles.previewPlaceholderBar}>
+                            <div className={styles.previewPlaceholderFill} style={{ width: `${mcmPending.pct}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <button
                     className={styles.importBtn}
+                    disabled={mcmStale}
                     onClick={() => handleImport(results.mcm)}
                   >Import MCM</button>
                   <div className={styles.previewNote}>
@@ -610,6 +699,7 @@ export default function ImageConverterModal() {
                   </div>
                 </>
               ) : (
+                <div className={styles.previewSurface}>
                 <div className={styles.previewPlaceholder}>
                   <div className={styles.previewPlaceholderInner}>
                     <div className={styles.previewPlaceholderLabel}>{mcmPending.label}</div>
@@ -618,6 +708,7 @@ export default function ImageConverterModal() {
                       <div className={styles.previewPlaceholderFill} style={{ width: `${mcmPending.pct}%` }} />
                     </div>
                   </div>
+                </div>
                 </div>
               )}
             </div>
