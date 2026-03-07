@@ -4,6 +4,10 @@ import { connect } from 'react-redux';
 import { bindActionCreators, Dispatch } from 'redux';
 import { RootState } from '../redux/types';
 import { Toolbar } from '../redux/toolbar';
+import * as selectors from '../redux/selectors';
+import * as screensSelectors from '../redux/screensSelectors';
+import { getEffectiveColorPalette } from '../redux/settingsSelectors';
+import { openBezelPreview } from '../utils/bezelPreview';
 import s from './CanvasToolPanel.module.css';
 
 interface Props {
@@ -11,9 +15,10 @@ interface Props {
   canvasGridBrightness: number;
   setCanvasGrid: (flag: boolean) => void;
   setCanvasGridBrightness: (v: number) => void;
+  onBezelPreview: () => void;
 }
 
-function CanvasToolPanel({ canvasGrid, canvasGridBrightness, setCanvasGrid, setCanvasGridBrightness }: Props) {
+function CanvasToolPanel({ canvasGrid, canvasGridBrightness, setCanvasGrid, setCanvasGridBrightness, onBezelPreview }: Props) {
   // Slider 1–10, where value N maps to brightness N/10
   const sliderValue = Math.max(1, Math.round(canvasGridBrightness * 10));
 
@@ -41,6 +46,9 @@ function CanvasToolPanel({ canvasGrid, canvasGridBrightness, setCanvasGrid, setC
         />
         <span className={s.brightnessValue}>{sliderValue}</span>
       </label>
+      <button className={s.previewBtn} onClick={onBezelPreview}>
+        Preview
+      </button>
     </>
   );
 }
@@ -50,8 +58,18 @@ export default connect(
     canvasGrid: state.toolbar.canvasGrid,
     canvasGridBrightness: state.toolbar.canvasGridBrightness,
   }),
-  (dispatch: Dispatch) => bindActionCreators({
-    setCanvasGrid: Toolbar.actions.setCanvasGrid,
-    setCanvasGridBrightness: Toolbar.actions.setCanvasGridBrightness,
-  }, dispatch)
+  (dispatch: Dispatch) => ({
+    ...bindActionCreators({
+      setCanvasGrid: Toolbar.actions.setCanvasGrid,
+      setCanvasGridBrightness: Toolbar.actions.setCanvasGridBrightness,
+    }, dispatch),
+    onBezelPreview: () => (dispatch as any)((dispatch: any, getState: any) => {
+      const state = getState();
+      const fb = selectors.getCurrentFramebuf(state);
+      if (!fb) return;
+      const { font } = selectors.getCurrentFramebufFont(state);
+      const palette = getEffectiveColorPalette(state, screensSelectors.getCurrentScreenFramebufIndex(state));
+      openBezelPreview({ ...fb, font }, palette);
+    }),
+  })
 )(CanvasToolPanel);

@@ -246,6 +246,45 @@
   border-color: #fff;
 }
 
+.rerenderNotice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid #5d5d5d;
+  border-radius: 4px;
+  background: #2b2b2b;
+}
+
+.rerenderText {
+  font-size: 12px;
+  color: #cfcfcf;
+}
+
+.rerenderBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border: 1px solid #6a8f79;
+  border-radius: 4px;
+  background: #3f6b52;
+  color: #f0f7f2;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rerenderBtn:hover {
+  background: #4a7b5f;
+}
+
+.rerenderBtn i {
+  font-size: 12px;
+}
+
 .previewsHeader {
   display: flex;
   justify-content: flex-end;
@@ -324,7 +363,6 @@
   max-width: 320px;
   margin: 0 auto;
   overflow: hidden;
-  transition: opacity 0.15s ease, filter 0.15s ease;
 }
 
 .previewSurfaceStale {
@@ -341,6 +379,7 @@
   image-rendering: pixelated;
   border: 1px solid #555;
   background: #111;
+  transition: opacity 0.15s ease, filter 0.15s ease;
 }
 
 .previewPlaceholder {

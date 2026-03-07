@@ -39,6 +39,24 @@ function getCharsetIndicator(charset: ConversionResult['charset']): { sample: st
   return { sample: 'ABC', label: 'Uppercase charset selected' };
 }
 
+function sanitizeScreenName(name: string): string | undefined {
+  const cleaned = name
+    .normalize('NFKC')
+    .replace(/[\/\\:*?"<>|]/g, ' ')
+    .replace(/[\u0000-\u001F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned || undefined;
+}
+
+function getTodayDateString(): string {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = `${today.getMonth() + 1}`.padStart(2, '0');
+  const day = `${today.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function loadSettings(): ConverterSettings {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -58,7 +76,7 @@ function saveSettings(settings: ConverterSettings) {
   } catch { /* ignore */ }
 }
 
-function resultToFramebuf(result: ConversionResult): Framebuf {
+function resultToFramebuf(result: ConversionResult, metadata?: Framebuf['metadata']): Framebuf {
   const framebuf: Pixel[][] = [];
   const isEcm = result.mode === 'ecm';
   const isMcm = result.mode === 'mcm';
@@ -83,6 +101,7 @@ function resultToFramebuf(result: ConversionResult): Framebuf {
     backgroundColor: result.backgroundColor,
     borderColor: result.backgroundColor,
     charset: result.charset,
+    metadata,
   };
   if (isEcm) {
     return {
@@ -237,11 +256,19 @@ function getPendingPreviewState(
   mode: PreviewMode,
   converting: boolean,
   activeRenderMode: PreviewMode | null,
+  awaitingManualRerender: boolean,
   progress: { stage: string; detail: string; pct: number }
 ): { label: string; detail: string; pct: number } {
   const modeName = mode === 'standard' ? 'Standard' : mode === 'ecm' ? 'ECM' : 'MCM';
 
   if (!converting) {
+    if (awaitingManualRerender) {
+      return {
+        label: 'Needs rerender',
+        detail: `Values changed. Click rerender to update ${modeName}.`,
+        pct: 0,
+      };
+    }
     return {
       label: 'Queued...',
       detail: 'Waiting to start conversion.',
@@ -358,12 +385,15 @@ export default function ImageConverterModal() {
     }
   }, [show, resetModalState]);
 
-  // Auto-convert when image or settings change
+  // Auto-convert the first render only. Once previews exist, setting changes
+  // should only mark them stale until the user explicitly requests rerendering.
   useEffect(() => {
     if (!image || !show || converting) return;
 
     const dirtyModes = buildDirtyModes(settings, results, resultSignatures, sourceVersion);
     if (dirtyModes.length === 0) return;
+    const hasRenderedOutputs = Boolean(results?.standard || results?.ecm || results?.mcm);
+    if (hasRenderedOutputs) return;
 
     if (convertTimeoutRef.current) clearTimeout(convertTimeoutRef.current);
 
@@ -458,6 +488,16 @@ export default function ImageConverterModal() {
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
+        conversionIdRef.current += 1;
+        if (convertTimeoutRef.current) {
+          clearTimeout(convertTimeoutRef.current);
+          convertTimeoutRef.current = null;
+        }
+        setResults(null);
+        setResultSignatures({});
+        setProgress({ stage: '', detail: '', pct: 0 });
+        setActiveRenderMode(null);
+        setConverting(false);
         setSourceVersion(prev => prev + 1);
         setImage(img);
         setFileName(file.name.replace(/\.[^.]+$/, ''));
@@ -535,10 +575,13 @@ export default function ImageConverterModal() {
   }, []);
 
   const handleImport = useCallback((result: ConversionResult) => {
-    const fb = resultToFramebuf(result);
+    const fb = resultToFramebuf(result, {
+      name: sanitizeScreenName(fileName),
+      date: getTodayDateString(),
+    });
     (dispatch as any)(ReduxRoot.actions.importFramebufsAppend([fb]));
     dispatch(Toolbar.actions.setShowImageConverter(false));
-  }, [dispatch]);
+  }, [dispatch, fileName]);
 
   const handleClose = useCallback(() => {
     dispatch(Toolbar.actions.setShowImageConverter(false));
@@ -556,6 +599,9 @@ export default function ImageConverterModal() {
 
   const activePalette = PALETTES.find(p => p.id === settings.paletteId) || PALETTES[0];
   const currentSignatures = buildPreviewSignatures(settings, sourceVersion);
+  const dirtyModes = image ? buildDirtyModes(settings, results, resultSignatures, sourceVersion) : [];
+  const hasRenderedOutputs = Boolean(results?.standard || results?.ecm || results?.mcm);
+  const awaitingManualRerender = !converting && hasRenderedOutputs && dirtyModes.length > 0;
   const controlsDisabled = converting;
   const showStandardPreview = Boolean(image);
   const showEcmPreview = Boolean(image && settings.outputEcm);
@@ -563,12 +609,23 @@ export default function ImageConverterModal() {
   const standardStale = Boolean(results?.standard && resultSignatures.standard !== currentSignatures.standard);
   const ecmStale = Boolean(results?.ecm && resultSignatures.ecm !== currentSignatures.ecm);
   const mcmStale = Boolean(results?.mcm && resultSignatures.mcm !== currentSignatures.mcm);
-  const standardPending = getPendingPreviewState('standard', converting, activeRenderMode, progress);
-  const ecmPending = getPendingPreviewState('ecm', converting, activeRenderMode, progress);
-  const mcmPending = getPendingPreviewState('mcm', converting, activeRenderMode, progress);
+  const standardPending = getPendingPreviewState('standard', converting, activeRenderMode, awaitingManualRerender, progress);
+  const ecmPending = getPendingPreviewState('ecm', converting, activeRenderMode, awaitingManualRerender, progress);
+  const mcmPending = getPendingPreviewState('mcm', converting, activeRenderMode, awaitingManualRerender, progress);
   const standardOverlayActive = standardStale && isPreviewOverlayActive('standard', converting, activeRenderMode);
   const ecmOverlayActive = ecmStale && isPreviewOverlayActive('ecm', converting, activeRenderMode);
   const mcmOverlayActive = mcmStale && isPreviewOverlayActive('mcm', converting, activeRenderMode);
+
+  const handleManualRerender = useCallback(() => {
+    if (!image || converting || dirtyModes.length === 0) {
+      return;
+    }
+    if (convertTimeoutRef.current) {
+      clearTimeout(convertTimeoutRef.current);
+      convertTimeoutRef.current = null;
+    }
+    doConversion(image, settings, sourceVersion, dirtyModes, results, resultSignatures);
+  }, [converting, dirtyModes, doConversion, image, resultSignatures, results, settings, sourceVersion]);
 
   if (!show) return null;
 
@@ -742,6 +799,16 @@ export default function ImageConverterModal() {
           </div>
         </div>
 
+        {awaitingManualRerender && (
+          <div className={styles.rerenderNotice}>
+            <div className={styles.rerenderText}>Values changed. Click to rerender the outputs.</div>
+            <button className={styles.rerenderBtn} onClick={handleManualRerender}>
+              <i className="fa-solid fa-repeat" aria-hidden="true" />
+              <span>Rerender Outputs</span>
+            </button>
+          </div>
+        )}
+
         {/* Previews */}
         {(showStandardPreview || showEcmPreview || showMcmPreview) && (
           <div className={styles.previews}>
@@ -750,12 +817,12 @@ export default function ImageConverterModal() {
               <h4>Standard (256 chars)</h4>
               {results?.standard ? (
                 <>
-                  <div className={`${styles.previewSurface} ${standardStale ? styles.previewSurfaceStale : ''}`}>
+                  <div className={styles.previewSurface}>
                     <canvas
                       ref={stdCanvasRef}
                       width={320}
                       height={200}
-                      className={styles.previewCanvas}
+                      className={`${styles.previewCanvas} ${standardStale ? styles.previewSurfaceStale : ''}`}
                     />
                     {standardOverlayActive && (
                       <div className={styles.previewOverlay}>
@@ -799,12 +866,12 @@ export default function ImageConverterModal() {
               <h4>ECM (64 chars, 4 bg)</h4>
               {results?.ecm ? (
                 <>
-                  <div className={`${styles.previewSurface} ${ecmStale ? styles.previewSurfaceStale : ''}`}>
+                  <div className={styles.previewSurface}>
                     <canvas
                       ref={ecmCanvasRef}
                       width={320}
                       height={200}
-                      className={styles.previewCanvas}
+                      className={`${styles.previewCanvas} ${ecmStale ? styles.previewSurfaceStale : ''}`}
                     />
                     {ecmOverlayActive && (
                       <div className={styles.previewOverlay}>
@@ -848,12 +915,12 @@ export default function ImageConverterModal() {
               <h4>MCM (mixed hires + multicolor)</h4>
               {results?.mcm ? (
                 <>
-                  <div className={`${styles.previewSurface} ${mcmStale ? styles.previewSurfaceStale : ''}`}>
+                  <div className={styles.previewSurface}>
                     <canvas
                       ref={mcmCanvasRef}
                       width={320}
                       height={200}
-                      className={styles.previewCanvas}
+                      className={`${styles.previewCanvas} ${mcmStale ? styles.previewSurfaceStale : ''}`}
                     />
                     {mcmOverlayActive && (
                       <div className={styles.previewOverlay}>

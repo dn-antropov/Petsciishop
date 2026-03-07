@@ -29,6 +29,14 @@ import { makeScreenName } from './utils'
 import * as fp from '../utils/fp'
 import { showConfirm } from '../utils/dialog';
 
+function getTodayDateString(): string {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = `${today.getMonth() + 1}`.padStart(2, '0');
+  const day = `${today.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export const ADD_SCREEN_AND_FRAMEBUF = 'ADD_SCREEN_AND_FRAMEBUF'
 
 const ADD_SCREEN = 'ADD_SCREEN'
@@ -80,7 +88,11 @@ function cloneScreen(index: number): ThunkAction<void, RootState, undefined, Act
       const newFramebufIdx = getScreens(state)[newScreenIdx]
       dispatch(Framebuffer.actions.copyFramebuf({
         ...framebuf,
-        metadata: { ...framebuf.metadata, name: makeScreenName(newFramebufIdx) }
+        metadata: {
+          ...framebuf.metadata,
+          name: makeScreenName(newFramebufIdx),
+          date: getTodayDateString()
+        }
       }, newFramebufIdx));
       dispatch(Toolbar.actions.setFramebufUIState(newFramebufIdx, selectors.getFramebufUIState(state, fbidx)));
     })
@@ -153,7 +165,10 @@ function newScreen(mode?: ColorMode): ThunkAction<void, RootState, undefined, Ac
       dispatch(Framebuffer.actions.setFields({
         ...colors,
         ...modeFields,
-        metadata: { name: makeScreenName(newFramebufIdx) }
+        metadata: {
+          name: makeScreenName(newFramebufIdx),
+          date: getTodayDateString()
+        }
       }, newFramebufIdx))
     })
   }
