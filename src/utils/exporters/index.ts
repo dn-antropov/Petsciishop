@@ -13,8 +13,6 @@ import { saveJSON } from './json'
 import { saveSEQ } from './seq'
 import { savePET } from './pet'
 
-import * as c64jasm from 'c64jasm';
-
 function findBytes(haystack: Uint8Array, needle: number[]): number {
   outer: for (let i = 0; i <= haystack.length - needle.length; i++) {
     for (let j = 0; j < needle.length; j++) {
@@ -76,7 +74,7 @@ function saveMarqC(fbs: Framebuf[], _options: FileFormat): string {
   return lines.join('\n') + '\n'
 }
 
-function exportC64jasmPRG(fb: FramebufWithFont, fmt: FileFormatPrg): Uint8Array {
+async function exportC64jasmPRG(fb: FramebufWithFont, fmt: FileFormatPrg): Promise<Uint8Array> {
   const source = genAsm([fb], {
     ...fmt,
     ext: 'asm',
@@ -99,14 +97,21 @@ function exportC64jasmPRG(fb: FramebufWithFont, fmt: FileFormatPrg): Uint8Array 
       throw new Error(`File not found ${fname}`);
     }
   }
-  const res = c64jasm.assemble("main.asm", options);
+  // Keep c64jasm out of the main browser bundle. It is only needed for
+  // non-ROM PRG exports, so load it on demand.
+  const c64jasm = await import('c64jasm');
+  const assemble = c64jasm.assemble ?? c64jasm.default?.assemble;
+  if (typeof assemble !== 'function') {
+    throw new Error('Failed to load c64jasm assembler.');
+  }
+  const res = assemble("main.asm", options);
   if (res.errors.length !== 0) {
     throw new Error("c64jasm.assemble failed, this should not happen.");
   }
   return new Uint8Array(res.prg);
 }
 
-function saveExecutablePRG(fb: FramebufWithFont, options: FileFormatPrg): Uint8Array {
+async function saveExecutablePRG(fb: FramebufWithFont, options: FileFormatPrg): Promise<Uint8Array> {
   const {
     width,
     height,
@@ -121,7 +126,7 @@ function saveExecutablePRG(fb: FramebufWithFont, options: FileFormatPrg): Uint8A
   }
 
   if (!(charset == 'upper' || charset == 'lower')) {
-    return exportC64jasmPRG(fb, options);
+    return await exportC64jasmPRG(fb, options);
   }
 
   let buf = getExecutablePrgTemplate().slice(0)

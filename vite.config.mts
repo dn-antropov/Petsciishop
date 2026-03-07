@@ -18,6 +18,15 @@ export default defineConfig({
   base: './',
   build: {
     outDir: 'dist',
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (id.includes('node_modules')) {
+            return 'vendor';
+          }
+        },
+      },
+    },
   },
   resolve: {
     // Prefer .ts/.tsx over .js/.jsx so TypeScript files shadow old JS stubs
@@ -25,6 +34,7 @@ export default defineConfig({
     alias: {
       path: 'path-browserify',
       fs: resolve(__dirname, 'src/utils/stubs/fs.ts'),
+      'import-fresh': resolve(__dirname, 'src/utils/stubs/importFresh.ts'),
     },
   },
   optimizeDeps: {

@@ -12,7 +12,7 @@ import {
   savePET
 } from './exporters'
 import { saveSDD } from './exporters/exportSdd'
-import { showAlert } from './dialog'
+import { showAlert, showConfirm } from './dialog'
 
 import {
   drawLine
@@ -222,7 +222,7 @@ async function getExportData(
   } else if (fmt.ext === 'asm') {
     return { data: saveAsm(framebufs, fmt as any), mimeType: 'text/plain' };
   } else if (fmt.ext === 'prg') {
-    return { data: saveExecutablePRG(selectedFramebuf, fmt as any), mimeType: 'application/octet-stream' };
+    return { data: await saveExecutablePRG(selectedFramebuf, fmt as any), mimeType: 'application/octet-stream' };
   } else if (fmt.ext === 'bas') {
     return { data: saveBASIC(framebufs, fmt as any), mimeType: 'text/plain' };
   } else if (fmt.ext === 'json') {
@@ -452,7 +452,7 @@ export function saveSettings(settings: Settings) {
 
 export async function promptProceedWithUnsavedChanges(state: RootState, msg: { title: string, detail: string }): Promise<boolean> {
   if (selectors.anyUnsavedChanges(state)) {
-    return (await import('./dialog')).showConfirm(`Workspace contains unsaved changes.\n\n${msg.detail}`);
+    return showConfirm(`Workspace contains unsaved changes.\n\n${msg.detail}`);
   }
   return true;
 }
