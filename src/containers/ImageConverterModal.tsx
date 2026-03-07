@@ -7,6 +7,7 @@ import * as ReduxRoot from '../redux/root';
 import { getROMFontBits } from '../redux/selectors';
 import {
   convertImage,
+  ConversionCancelledError,
   ConverterFontBits,
   ConversionOutputs,
   ConversionResult,
@@ -458,7 +459,8 @@ export default function ImageConverterModal() {
               return;
             }
             setProgress({ stage, detail, pct });
-          }
+          },
+          () => conversionId !== conversionIdRef.current
         );
         if (conversionId !== conversionIdRef.current) {
           return;
@@ -473,6 +475,9 @@ export default function ImageConverterModal() {
         await new Promise(resolve => setTimeout(resolve, 0));
       }
     } catch (err) {
+      if (err instanceof ConversionCancelledError) {
+        return;
+      }
       console.error('Conversion failed:', err);
     } finally {
       if (conversionId === conversionIdRef.current) {
@@ -632,7 +637,10 @@ export default function ImageConverterModal() {
   return (
     <Modal showModal={show} width={1080}>
       <div className={styles.container}>
-        <h3 className={styles.title}>Convert Image to PETSCII</h3>
+        <div className={styles.titleBlock}>
+          <h3 className={styles.title}>Convert Image to PETSCII</h3>
+          <div className={styles.titleSupport}>Powered by the TruSkii3000™ converter engine</div>
+        </div>
 
         <div className={styles.topRow}>
           {/* File Selection / Reference Image */}
@@ -843,7 +851,7 @@ export default function ImageConverterModal() {
                   <button
                     className={styles.importBtn}
                     disabled={standardStale || converting}
-                    onClick={() => handleImport(results.standard)}
+                    onClick={() => handleImport(results.standard!)}
                   >Import Standard</button>
                 </>
               ) : (
@@ -892,7 +900,7 @@ export default function ImageConverterModal() {
                   <button
                     className={styles.importBtn}
                     disabled={ecmStale || converting}
-                    onClick={() => handleImport(results.ecm)}
+                    onClick={() => handleImport(results.ecm!)}
                   >Import ECM</button>
                 </>
               ) : (
@@ -941,7 +949,7 @@ export default function ImageConverterModal() {
                   <button
                     className={styles.importBtn}
                     disabled={mcmStale || converting}
-                    onClick={() => handleImport(results.mcm)}
+                    onClick={() => handleImport(results.mcm!)}
                   >Import MCM</button>
                   <div className={styles.previewNote}>
                     BG {results.mcm.backgroundColor}, MC1 {results.mcm.mcmSharedColors[0] ?? 0}, MC2 {results.mcm.mcmSharedColors[1] ?? 0}

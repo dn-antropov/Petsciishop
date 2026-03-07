@@ -2,10 +2,21 @@
   color: #ddd;
 }
 
+.titleBlock {
+  margin-bottom: 16px;
+}
+
 .title {
-  margin: 0 0 16px 0;
+  margin: 0;
   font-size: 16px;
   font-weight: bold;
+}
+
+.titleSupport {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #9ec8af;
+  letter-spacing: 0.02em;
 }
 
 .topRow {
