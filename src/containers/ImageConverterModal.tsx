@@ -529,18 +529,6 @@ export default function ImageConverterModal() {
           </div>
         </div>
 
-        {/* Progress */}
-        {converting && (
-          <div className={styles.progressContainer}>
-            <div className={styles.progressLabel}>
-              {progress.stage} {progress.detail}
-            </div>
-            <div className={styles.progressBar}>
-              <div className={styles.progressFill} style={{ width: `${progress.pct}%` }} />
-            </div>
-          </div>
-        )}
-
         {/* Previews */}
         {(showStandardPreview || showEcmPreview || showMcmPreview) && (
           <div className={styles.previews}>
