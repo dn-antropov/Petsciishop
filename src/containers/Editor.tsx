@@ -1248,7 +1248,7 @@ export default connect(
       setWorkspacePaletteId: (paletteId: string) => {
         dispatch(settings.actions.setSelectedColorPaletteName({ branch: 'saved', name: paletteId }));
         dispatch(settings.actions.setSelectedColorPaletteName({ branch: 'editing', name: paletteId }));
-        dispatch(settings.actions.persistSavedSoon());
+        (dispatch as any)(settings.actions.persistSavedSoon());
       },
       setBorderColor: (color: number, framebufIndex: number) =>
         dispatch(Framebuffer.actions.setBorderColor(color, framebufIndex)),
