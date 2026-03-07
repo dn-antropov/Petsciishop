@@ -9,23 +9,41 @@ const BORDER_RIGHT_WIDTH = 32;
 const BORDER_TOP_HEIGHT = 35;
 const BORDER_BOTTOM_HEIGHT = 37;
 
-export function computeOutputImageDims(fb: FramebufWithFont, borders: boolean) {
+export type BorderSpec = {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+};
+
+const DEFAULT_BORDER_SPEC: BorderSpec = {
+  left: BORDER_LEFT_WIDTH,
+  right: BORDER_RIGHT_WIDTH,
+  top: BORDER_TOP_HEIGHT,
+  bottom: BORDER_BOTTOM_HEIGHT,
+};
+
+export function computeOutputImageDims(fb: FramebufWithFont, borders: boolean, borderSpec: BorderSpec = DEFAULT_BORDER_SPEC) {
   const { width, height } = fb;
-  const borderLeftWidth = borders ? BORDER_LEFT_WIDTH : 0;  // 384x272 for 320x200
-  const borderTopHeight = borders ? BORDER_TOP_HEIGHT : 0;
+  const borderLeftWidth = borders ? borderSpec.left : 0;  // 384x272 for 320x200
+  const borderTopHeight = borders ? borderSpec.top : 0;
   let imgWidth = width*8;
   let imgHeight = height*8;
   if (borders) {
-    imgWidth  += BORDER_LEFT_WIDTH + BORDER_RIGHT_WIDTH;
-    imgHeight += BORDER_TOP_HEIGHT + BORDER_BOTTOM_HEIGHT;
+    imgWidth  += borderSpec.left + borderSpec.right;
+    imgHeight += borderSpec.top + borderSpec.bottom;
   }
   return { imgWidth, imgHeight, imgXOffset: borderLeftWidth, imgYOffset: borderTopHeight };
 }
 
-export function framebufToPixelsIndexed(fb: FramebufWithFont, borders: boolean): Uint8Array  {
+export function framebufToPixelsIndexed(
+  fb: FramebufWithFont,
+  borders: boolean,
+  borderSpec: BorderSpec = DEFAULT_BORDER_SPEC
+): Uint8Array  {
   const { width, height, framebuf, backgroundColor, borderColor, font } = fb;
   const fontData = font.bits;
-  const { imgWidth, imgHeight, imgXOffset, imgYOffset } = computeOutputImageDims(fb, borders);
+  const { imgWidth, imgHeight, imgXOffset, imgYOffset } = computeOutputImageDims(fb, borders, borderSpec);
   const buf = new Uint8Array(imgWidth * imgHeight);
 
   buf.fill(borderColor);
@@ -88,10 +106,15 @@ export function framebufToPixelsIndexed(fb: FramebufWithFont, borders: boolean):
   return buf
 }
 
-export function framebufToPixels(fb: FramebufWithFont, palette: RgbPalette, borders: boolean): Uint8Array {
-  const { imgWidth, imgHeight } = computeOutputImageDims(fb, borders);
+export function framebufToPixels(
+  fb: FramebufWithFont,
+  palette: RgbPalette,
+  borders: boolean,
+  borderSpec: BorderSpec = DEFAULT_BORDER_SPEC
+): Uint8Array {
+  const { imgWidth, imgHeight } = computeOutputImageDims(fb, borders, borderSpec);
 
-  const indexedBuf = framebufToPixelsIndexed(fb, borders)
+  const indexedBuf = framebufToPixelsIndexed(fb, borders, borderSpec)
   const buf = new Uint8Array(imgWidth * imgHeight * 4)
 
   for (let y = 0; y < imgHeight; y++) {

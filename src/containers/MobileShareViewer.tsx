@@ -3,7 +3,7 @@ import { Framebuf, FramebufWithFont } from '../redux/types';
 import { getColorPaletteById } from '../utils/palette';
 import { C64_PALETTES } from '../utils/c64Palettes';
 import { getROMFontBits } from '../redux/selectors';
-import { framebufToPixels, computeOutputImageDims } from '../utils/exporters/util';
+import { framebufToPixels, computeOutputImageDims, BorderSpec } from '../utils/exporters/util';
 import { CHARSET_LOWER, CHARSET_UPPER } from '../redux/editor';
 import s from './MobileShareViewer.module.css';
 
@@ -13,6 +13,7 @@ interface MobileShareViewerProps {
 
 const MONTH_CODES = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 const URL_RE = /(https?:\/\/[^\s]+)/g;
+const MOBILE_BORDER_SPEC: BorderSpec = { left: 24, right: 24, top: 27, bottom: 29 };
 
 function formatDate(date: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
@@ -33,6 +34,7 @@ function renderTextWithLinks(text: string) {
 }
 
 export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) {
+  const renderBorders = true;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasWrapRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -69,7 +71,14 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
     return getROMFontBits(charset);
   }, [framebuf.charset]);
 
-  const dims = useMemo(() => computeOutputImageDims({ ...framebuf, font } as FramebufWithFont, false), [framebuf, font]);
+  const dims = useMemo(
+    () => computeOutputImageDims({ ...framebuf, font } as FramebufWithFont, renderBorders, MOBILE_BORDER_SPEC),
+    [framebuf, font]
+  );
+  const borderCssColor = useMemo(() => {
+    const c = palette[framebuf.borderColor];
+    return `rgb(${c.r}, ${c.g}, ${c.b})`;
+  }, [palette, framebuf.borderColor]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -77,7 +86,7 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
       return;
     }
     const fbWithFont: FramebufWithFont = { ...framebuf, font };
-    const pixels = framebufToPixels(fbWithFont, palette, false);
+    const pixels = framebufToPixels(fbWithFont, palette, renderBorders, MOBILE_BORDER_SPEC);
     const rgba = new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, pixels.byteLength);
     const imageData = new ImageData(rgba, dims.imgWidth, dims.imgHeight);
     const ctx = canvas.getContext('2d');
@@ -342,7 +351,12 @@ export default function MobileShareViewer({ framebuf }: MobileShareViewerProps) 
           </button>
         </div>
       </div>
-      <div ref={canvasWrapRef} className={s.canvasWrap} onDoubleClick={toggleFullscreen}>
+      <div
+        ref={canvasWrapRef}
+        className={s.canvasWrap}
+        style={{ backgroundColor: borderCssColor }}
+        onDoubleClick={toggleFullscreen}
+      >
         <div className={s.stage} style={isFullscreen ? stageStyle : normalStageStyle}>
           <canvas
             ref={canvasRef}
