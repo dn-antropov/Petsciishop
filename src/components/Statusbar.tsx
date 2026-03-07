@@ -47,6 +47,7 @@ interface CanvasStatusbarProps {
   charPos:  Coord2 | null;
   inspectedScreencode?: number;
   inspectedColorIndex?: number;
+  onFileInfo?: () => void;
 }
 
 export class CanvasStatusbar extends PureComponent<CanvasStatusbarProps> {
@@ -81,7 +82,7 @@ export class CanvasStatusbar extends PureComponent<CanvasStatusbarProps> {
     const widthHeight = `${framebuf.width}x${framebuf.height}`
     const colorMode = this.getColorModeLabel();
     return (
-      <div style={{paddingTop: '4px', fontSize: '0.8em', display: 'flex', flexDirection:'row'}}>
+      <div style={{paddingTop: '4px', fontSize: '0.8em', display: 'flex', flexDirection:'row', alignItems: 'center'}}>
         <FixedWidthCoord axis='X' number={cp !== null ? cp.col : null} />
         <FixedWidthCoord axis='Y' number={cp !== null ? cp.row : null} />
         <FixedWidthCoord axis='C' number={formatScreencode(cc)} numberPixelWidth={60} />
@@ -99,6 +100,24 @@ export class CanvasStatusbar extends PureComponent<CanvasStatusbarProps> {
         )}
         {this.props.inspectedColorIndex !== undefined && (
           <FixedWidthCoord axis='Color' number={this.props.inspectedColorIndex} numberPixelWidth={20} />
+        )}
+        {this.props.onFileInfo && (
+          <button
+            onClick={this.props.onFileInfo}
+            title='Screen Info'
+            style={{
+              marginLeft: 'auto',
+              fontSize: '0.85em',
+              padding: '1px 10px',
+              background: 'rgba(255,255,255,0.07)',
+              border: '1px solid rgba(255,255,255,0.15)',
+              borderRadius: '3px',
+              color: '#aaa',
+              cursor: 'pointer',
+            }}
+          >
+            File Info
+          </button>
         )}
       </div>
     )

@@ -1155,6 +1155,7 @@ class Editor extends Component<EditorProps & EditorDispatch, EditorState> {
             charPos={this.state.charPos}
             inspectedScreencode={inspectedScreencode}
             inspectedColorIndex={inspectedColorIndex}
+            onFileInfo={this.props.framebufIndex !== null ? () => this.props.Toolbar.setShowScreenInfo({ show: true, framebufIndex: this.props.framebufIndex! }) : undefined}
           />
         </div>
         <div style={{marginLeft: '8px', marginRight: '16px'}}>
