@@ -17,7 +17,10 @@ function AboutModal({ show, onClose }: Props) {
     <Modal showModal={show}>
       <div className={styles.container}>
         <img src={import.meta.env.BASE_URL + 'assets/petsciishop_logo.png'} alt='Petsciishop' className={styles.logo} />
-        <h2 className={styles.version}>v{pkg.version}</h2>
+        <div className={styles.versionBlock}>
+          <h2 className={styles.version}>v{pkg.version}</h2>
+          <p className={styles.buildNum}>Build {buildInfo.build}</p>
+        </div>
         <p className={styles.tagline}>An 🔓 open source, web-based 🕹️ C64 PETSCII graphics editor on steroids. 💪</p>
         <p className={styles.body}>
           Drawing tools, export formats, state-of-the-art best-in-class image
@@ -35,7 +38,6 @@ function AboutModal({ show, onClose }: Props) {
             Petsciishop on GitHub
           </a>
         </div>
-        <p className={styles.buildNum}>Build {buildInfo.build}</p>
         <button className={styles.closeBtn} onClick={onClose}>Close</button>
       </div>
     </Modal>
