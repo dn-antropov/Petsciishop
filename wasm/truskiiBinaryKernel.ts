@@ -1,17 +1,18 @@
 /*
- * TruSkii3000 Standard WASM kernel
+ * TruSkii3000 binary WASM kernel
  *
- * This file is a tiny SIMD helper used by the Standard-mode converter worker.
- * The TypeScript host prepares one source cell at a time, copies that cell's
- * weighted pixel-versus-palette error table into this module's linear memory,
- * then asks the kernel to accumulate those errors for every PETSCII character.
+ * This file is the shared SIMD helper used by the binary character-mode
+ * converter paths: Standard and ECM. The TypeScript host prepares one source
+ * cell at a time, copies that cell's weighted pixel-versus-palette error table
+ * into this module's linear memory, then asks the kernel to accumulate those
+ * errors for every PETSCII character.
  *
  * In practical terms, the output answers:
  *   "for character N, what is the total cost of drawing its set pixels with
  *    each of the 16 C64 colors?"
  *
- * The rest of the Standard solver still lives in TypeScript. This kernel only
- * accelerates the hottest matrix-accumulation step.
+ * The rest of the Standard/ECM solver still lives in TypeScript. This kernel
+ * only accelerates the hottest matrix-accumulation step shared by both modes.
  *
  * What we know about speed so far:
  * - Scalar WASM was not enough; the useful version here is the SIMD path.

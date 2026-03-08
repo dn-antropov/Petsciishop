@@ -1,11 +1,11 @@
-import wasmUrl from './truskiiStandardKernel.wasm?url';
+import wasmUrl from './truskiiBinaryKernel.wasm?url';
 
 type BinaryKernelContext = {
   flatPositions: Uint8Array;
   positionOffsets: Int32Array;
 };
 
-type StandardKernelExports = {
+type BinaryKernelExports = {
   memory: WebAssembly.Memory;
   getWeightedPixelErrorsPtr(): number;
   getPositionOffsetsPtr(): number;
@@ -14,7 +14,7 @@ type StandardKernelExports = {
   computeSetErrs(): void;
 };
 
-type StandardKernelImports = WebAssembly.Imports & {
+type BinaryKernelImports = WebAssembly.Imports & {
   env: {
     abort(message?: number, fileName?: number, line?: number, column?: number): never;
   };
@@ -24,19 +24,19 @@ export interface StandardCandidateScoringKernel {
   computeSetErrs(weightedPixelErrors: Float32Array, context: BinaryKernelContext): Float32Array;
 }
 
-export interface StandardWasmKernelCreateResult {
-  kernel: StandardWasmKernel | null;
+export interface BinaryWasmKernelCreateResult {
+  kernel: BinaryWasmKernel | null;
   error?: string;
 }
 
 let wasmModulePromise: Promise<WebAssembly.Module> | null = null;
 
-function buildImports(): StandardKernelImports {
+function buildImports(): BinaryKernelImports {
   return {
     env: {
       abort(_message?: number, _fileName?: number, line?: number, column?: number): never {
         throw new Error(
-          `[TruSkii3000] Standard WASM kernel aborted${line !== undefined ? ` at ${line}:${column ?? 0}` : ''}.`
+          `[TruSkii3000] Standard/ECM WASM kernel aborted${line !== undefined ? ` at ${line}:${column ?? 0}` : ''}.`
         );
       },
     },
@@ -64,15 +64,15 @@ function compileModule(): Promise<WebAssembly.Module> {
   return wasmModulePromise;
 }
 
-export class StandardWasmKernel implements StandardCandidateScoringKernel {
-  private readonly exports: StandardKernelExports;
+export class BinaryWasmKernel implements StandardCandidateScoringKernel {
+  private readonly exports: BinaryKernelExports;
   private loadedContext: BinaryKernelContext | null = null;
   private weightedPixelErrorsView: Float32Array;
   private positionOffsetsView: Int32Array;
   private flatPositionsView: Uint8Array;
   private outputSetErrsView: Float32Array;
 
-  private constructor(exports: StandardKernelExports) {
+  private constructor(exports: BinaryKernelExports) {
     this.exports = exports;
     this.weightedPixelErrorsView = new Float32Array(
       exports.memory.buffer,
@@ -96,11 +96,11 @@ export class StandardWasmKernel implements StandardCandidateScoringKernel {
     );
   }
 
-  static async create(): Promise<StandardWasmKernelCreateResult> {
+  static async create(): Promise<BinaryWasmKernelCreateResult> {
     try {
       const module = await compileModule();
       const instance = await WebAssembly.instantiate(module, buildImports());
-      return { kernel: new StandardWasmKernel(instance.exports as unknown as StandardKernelExports) };
+      return { kernel: new BinaryWasmKernel(instance.exports as unknown as BinaryKernelExports) };
     } catch (error) {
       return {
         kernel: null,

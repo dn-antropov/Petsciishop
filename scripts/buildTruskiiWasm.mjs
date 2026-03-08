@@ -10,8 +10,8 @@ const repoRoot = resolve(scriptDir, '..');
 const ascBinary = resolve(repoRoot, 'node_modules', '.bin', 'asc');
 const builds = [
   {
-    entryFile: resolve(repoRoot, 'wasm', 'truskiiStandardKernel.ts'),
-    outFile: resolve(repoRoot, 'src', 'utils', 'importers', 'truskiiStandardKernel.wasm'),
+    entryFile: resolve(repoRoot, 'wasm', 'truskiiBinaryKernel.ts'),
+    outFile: resolve(repoRoot, 'src', 'utils', 'importers', 'truskiiBinaryKernel.wasm'),
   },
   {
     entryFile: resolve(repoRoot, 'wasm', 'truskiiMcmKernel.ts'),

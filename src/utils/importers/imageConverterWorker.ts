@@ -24,7 +24,7 @@ import type {
   PaletteMetricData,
   StandardCandidateScoringKernel,
 } from './imageConverterStandardCore';
-import { StandardWasmKernel } from './imageConverterStandardWasm';
+import { BinaryWasmKernel } from './imageConverterBinaryWasm';
 import { McmWasmKernel } from './imageConverterMcmWasm';
 import type {
   ConverterWorkerRequestMessage,
@@ -92,7 +92,7 @@ self.onmessage = async (event: MessageEvent<ConverterWorkerRequestMessage>) => {
         lower: buildModeCharsetConversionContext(message.fontBitsByCharset.lower, true),
       };
       const [standardWasm, mcmWasm] = await Promise.all([
-        StandardWasmKernel.create(),
+        BinaryWasmKernel.create(),
         McmWasmKernel.create(),
       ]);
       state.scoringKernel = standardWasm.kernel;

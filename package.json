@@ -9,9 +9,9 @@
     "Graphics"
   ],
   "scripts": {
-    "build:standard-wasm": "node scripts/buildStandardWasm.mjs",
-    "predev": "npm run build:standard-wasm",
-    "prebuild": "npm run build:standard-wasm",
+    "build:truskii-wasm": "node scripts/buildTruskiiWasm.mjs",
+    "predev": "npm run build:truskii-wasm",
+    "prebuild": "npm run build:truskii-wasm",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
