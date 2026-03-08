@@ -7,10 +7,20 @@ const MAX_PAIR_POSITION_COUNT: i32 = CHAR_COUNT * PAIR_COUNT;
 const SET_ERR_COUNT: i32 = CHAR_COUNT * COLOR_COUNT;
 const BIT_PAIR_ERR_COUNT: i32 = CHAR_COUNT * 4 * COLOR_COUNT;
 
+// Per-pixel error table used by the MCM hires path:
+// [64 pixels][16 palette colors].
 const weightedPixelErrors = new Float32Array(PIXEL_COUNT * COLOR_COUNT);
+
+// Per-bit-pair error table used by the multicolor path:
+// [32 bit-pairs][16 palette colors].
 const weightedPairErrors = new Float32Array(PAIR_COUNT * COLOR_COUNT);
+
+// Hires character shape: set pixel positions per character.
 const positionOffsets = new Int32Array(CHAR_COUNT + 1);
 const flatPositions = new Uint8Array(MAX_POSITION_COUNT);
+
+// Multicolor character shape: for each 2-bit pattern (00, 01, 10, 11), store
+// the bit-pair positions where that pattern appears for each character.
 const mcmPositionOffsets0 = new Int32Array(CHAR_COUNT + 1);
 const mcmPositionOffsets1 = new Int32Array(CHAR_COUNT + 1);
 const mcmPositionOffsets2 = new Int32Array(CHAR_COUNT + 1);
@@ -38,6 +48,7 @@ export function getOutputSetErrsPtr(): usize { return outputSetErrs.dataStart; }
 export function getOutputBitPairErrsPtr(): usize { return outputBitPairErrs.dataStart; }
 
 function zero16(ptr: usize, zero: v128): void {
+  // Store 16 f32 zeros using 4 SIMD writes.
   v128.store(ptr, zero);
   v128.store(ptr + 16, zero);
   v128.store(ptr + 32, zero);
@@ -51,6 +62,8 @@ function accumulatePositions(
   offsets: Int32Array,
   ch: i32
 ): void {
+  // Sum the referenced rows from either the per-pixel or per-bit-pair error
+  // table into one contiguous 16-color output row.
   const start = offsets[ch];
   const end = offsets[ch + 1];
   for (let i: i32 = start; i < end; i++) {
@@ -68,10 +81,14 @@ export function computeMatrices(): void {
   const pairBasePtr = weightedPairErrors.dataStart;
 
   for (let ch: i32 = 0; ch < CHAR_COUNT; ch++) {
+    // Hires-style matrix used by the mixed MCM solver when a cell is treated as
+    // a 1-bit-per-pixel character.
     const setOutPtr: usize = outputSetErrs.dataStart + (<usize>(ch << 4) << 2);
     zero16(setOutPtr, zero);
     accumulatePositions(setOutPtr, pixelBasePtr, flatPositions, positionOffsets, ch);
 
+    // Four 16-color rows per character, one for each 2-bit multicolor symbol.
+    // The host later maps these rows to bg/mc1/mc2/cell-color choices.
     const bp0Ptr: usize = outputBitPairErrs.dataStart + (<usize>((ch * 64) << 2));
     const bp1Ptr: usize = bp0Ptr + 64;
     const bp2Ptr: usize = bp1Ptr + 64;
