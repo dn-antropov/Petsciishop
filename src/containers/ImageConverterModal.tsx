@@ -9,6 +9,7 @@ import {
   convertImage,
   ConversionCancelledError,
   disposeStandardConverterWorkers,
+  ConverterAccelerationPath,
   ConverterFontBits,
   ConversionOutputs,
   ConversionResult,
@@ -17,7 +18,6 @@ import {
   CONVERTER_PRESETS,
   PALETTES,
 } from '../utils/importers/imageConverter';
-import type { StandardAccelerationPath } from '../utils/importers/imageConverter';
 import styles from './ImageConverterModal.module.css';
 
 const STORAGE_KEY = 'petsciishop-image-converter-settings';
@@ -42,8 +42,8 @@ function getCharsetIndicator(charset: ConversionResult['charset']): { sample: st
   return { sample: 'ABC', label: 'Uppercase charset selected' };
 }
 
-function getStandardBackendLabel(backend: StandardAccelerationPath): string {
-  return backend === 'wasm' ? 'WASM' : 'JS fallback';
+function getBackendLabel(backend: ConverterAccelerationPath): string {
+  return backend === 'wasm' ? 'WASM' : 'JS';
 }
 
 function sanitizeScreenName(name: string): string | undefined {
@@ -405,7 +405,7 @@ export default function ImageConverterModal() {
   const [resultSignatures, setResultSignatures] = useState<PreviewSignatures>({});
   const [previewTimings, setPreviewTimings] = useState<PreviewTimings>(createEmptyPreviewTimings);
   const [timerNowMs, setTimerNowMs] = useState(() => Date.now());
-  const [standardBackend, setStandardBackend] = useState<StandardAccelerationPath | null>(null);
+  const [backendByMode, setBackendByMode] = useState<Partial<Record<PreviewMode, ConverterAccelerationPath>>>({});
 
   const stdCanvasRef = useRef<HTMLCanvasElement>(null);
   const ecmCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -441,7 +441,7 @@ export default function ImageConverterModal() {
     setResults(null);
     setResultSignatures({});
     setPreviewTimings(createEmptyPreviewTimings());
-    setStandardBackend(null);
+    setBackendByMode({});
     setProgress({ stage: '', detail: '', pct: 0 });
     setActiveRenderMode(null);
     setConverting(false);
@@ -530,9 +530,13 @@ export default function ImageConverterModal() {
       }
       return next;
     });
-    if (queuedModes.includes('standard')) {
-      setStandardBackend(null);
-    }
+    setBackendByMode(prev => {
+      const next = { ...prev };
+      for (const mode of queuedModes) {
+        delete next[mode];
+      }
+      return next;
+    });
     let nextResults = trimResultsForSettings(initialResults, s);
     let nextSignatures = trimSignaturesForSettings(initialSignatures, s);
     try {
@@ -561,14 +565,12 @@ export default function ImageConverterModal() {
             }
             setProgress({ stage, detail, pct });
           },
-          mode === 'standard'
-            ? backend => {
-              if (conversionId !== conversionIdRef.current) {
-                return;
-              }
-              setStandardBackend(backend);
+          (backendMode, backend) => {
+            if (conversionId !== conversionIdRef.current) {
+              return;
             }
-            : undefined,
+            setBackendByMode(prev => ({ ...prev, [backendMode]: backend }));
+          },
           () => conversionId !== conversionIdRef.current
         );
         if (conversionId !== conversionIdRef.current) {
@@ -630,7 +632,7 @@ export default function ImageConverterModal() {
         setResults(null);
         setResultSignatures({});
         setPreviewTimings(createEmptyPreviewTimings());
-        setStandardBackend(null);
+        setBackendByMode({});
         setProgress({ stage: '', detail: '', pct: 0 });
         setActiveRenderMode(null);
         setConverting(false);
@@ -769,11 +771,23 @@ export default function ImageConverterModal() {
     Boolean(results?.mcm),
     mcmStale
   );
-  const standardLiveBackendLabel = converting && activeRenderMode === 'standard' && standardBackend
-    ? getStandardBackendLabel(standardBackend)
+  const standardLiveBackendLabel = converting && activeRenderMode === 'standard' && backendByMode.standard
+    ? getBackendLabel(backendByMode.standard)
     : null;
   const standardCompletedBackendLabel = results?.standard?.accelerationBackend && !standardStale
-    ? getStandardBackendLabel(results.standard.accelerationBackend)
+    ? getBackendLabel(results.standard.accelerationBackend)
+    : null;
+  const ecmLiveBackendLabel = converting && activeRenderMode === 'ecm' && backendByMode.ecm
+    ? getBackendLabel(backendByMode.ecm)
+    : null;
+  const ecmCompletedBackendLabel = results?.ecm?.accelerationBackend && !ecmStale
+    ? getBackendLabel(results.ecm.accelerationBackend)
+    : null;
+  const mcmLiveBackendLabel = converting && activeRenderMode === 'mcm' && backendByMode.mcm
+    ? getBackendLabel(backendByMode.mcm)
+    : null;
+  const mcmCompletedBackendLabel = results?.mcm?.accelerationBackend && !mcmStale
+    ? getBackendLabel(results.mcm.accelerationBackend)
     : null;
 
   const handleManualRerender = useCallback(() => {
@@ -1053,6 +1067,7 @@ export default function ImageConverterModal() {
                             <div className={styles.previewPlaceholderFill} style={{ width: `${ecmPending.pct}%` }} />
                           </div>
                           {ecmLiveTiming && <div className={styles.previewTimingLive}>{ecmLiveTiming}</div>}
+                          {ecmLiveBackendLabel && <div className={styles.previewBackendBadge}>{ecmLiveBackendLabel}</div>}
                         </div>
                       </div>
                     )}
@@ -1061,6 +1076,7 @@ export default function ImageConverterModal() {
                     <span className={styles.charsetSample}>{getCharsetIndicator(results.ecm.charset).sample}</span>
                     <span>{getCharsetIndicator(results.ecm.charset).label}</span>
                   </div>
+                  {ecmCompletedBackendLabel && <div className={styles.previewBackendBadge}>{ecmCompletedBackendLabel}</div>}
                   {ecmCompletedTiming && <div className={styles.previewTimingDone}>{ecmCompletedTiming}</div>}
                   <button
                     className={styles.importBtn}
@@ -1078,6 +1094,7 @@ export default function ImageConverterModal() {
                       <div className={styles.previewPlaceholderFill} style={{ width: `${ecmPending.pct}%` }} />
                     </div>
                     {ecmLiveTiming && <div className={styles.previewTimingLive}>{ecmLiveTiming}</div>}
+                    {ecmLiveBackendLabel && <div className={styles.previewBackendBadge}>{ecmLiveBackendLabel}</div>}
                   </div>
                 </div>
                 </div>
@@ -1105,6 +1122,7 @@ export default function ImageConverterModal() {
                             <div className={styles.previewPlaceholderFill} style={{ width: `${mcmPending.pct}%` }} />
                           </div>
                           {mcmLiveTiming && <div className={styles.previewTimingLive}>{mcmLiveTiming}</div>}
+                          {mcmLiveBackendLabel && <div className={styles.previewBackendBadge}>{mcmLiveBackendLabel}</div>}
                         </div>
                       </div>
                     )}
@@ -1113,6 +1131,7 @@ export default function ImageConverterModal() {
                     <span className={styles.charsetSample}>{getCharsetIndicator(results.mcm.charset).sample}</span>
                     <span>{getCharsetIndicator(results.mcm.charset).label}</span>
                   </div>
+                  {mcmCompletedBackendLabel && <div className={styles.previewBackendBadge}>{mcmCompletedBackendLabel}</div>}
                   {mcmCompletedTiming && <div className={styles.previewTimingDone}>{mcmCompletedTiming}</div>}
                   <button
                     className={styles.importBtn}
@@ -1133,6 +1152,7 @@ export default function ImageConverterModal() {
                       <div className={styles.previewPlaceholderFill} style={{ width: `${mcmPending.pct}%` }} />
                     </div>
                     {mcmLiveTiming && <div className={styles.previewTimingLive}>{mcmLiveTiming}</div>}
+                    {mcmLiveBackendLabel && <div className={styles.previewBackendBadge}>{mcmLiveBackendLabel}</div>}
                   </div>
                 </div>
                 </div>

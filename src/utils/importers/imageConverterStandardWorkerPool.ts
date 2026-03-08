@@ -87,8 +87,8 @@ class StandardWorkerPool {
           slot.worker.removeEventListener('error', handleError);
           resolve({
             workerId: slot.id,
-            wasmEnabled: event.data.wasmEnabled,
-            wasmError: event.data.wasmError,
+            wasmEnabled: event.data.wasmByMode.standard,
+            wasmError: event.data.wasmErrors?.standard,
           });
         }
       };

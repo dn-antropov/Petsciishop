@@ -1,6 +1,9 @@
 import wasmUrl from './truskiiStandardKernel.wasm?url';
 
-import type { CharsetConversionContext } from './imageConverterStandardCore';
+type BinaryKernelContext = {
+  flatPositions: Uint8Array;
+  positionOffsets: Int32Array;
+};
 
 type StandardKernelExports = {
   memory: WebAssembly.Memory;
@@ -18,7 +21,7 @@ type StandardKernelImports = WebAssembly.Imports & {
 };
 
 export interface StandardCandidateScoringKernel {
-  computeSetErrs(weightedPixelErrors: Float32Array, context: CharsetConversionContext): Float32Array;
+  computeSetErrs(weightedPixelErrors: Float32Array, context: BinaryKernelContext): Float32Array;
 }
 
 export interface StandardWasmKernelCreateResult {
@@ -63,7 +66,7 @@ function compileModule(): Promise<WebAssembly.Module> {
 
 export class StandardWasmKernel implements StandardCandidateScoringKernel {
   private readonly exports: StandardKernelExports;
-  private loadedContext: CharsetConversionContext | null = null;
+  private loadedContext: BinaryKernelContext | null = null;
   private weightedPixelErrorsView: Float32Array;
   private positionOffsetsView: Int32Array;
   private flatPositionsView: Uint8Array;
@@ -106,14 +109,14 @@ export class StandardWasmKernel implements StandardCandidateScoringKernel {
     }
   }
 
-  computeSetErrs(weightedPixelErrors: Float32Array, context: CharsetConversionContext): Float32Array {
+  computeSetErrs(weightedPixelErrors: Float32Array, context: BinaryKernelContext): Float32Array {
     this.ensureContext(context);
     this.weightedPixelErrorsView.set(weightedPixelErrors);
     this.exports.computeSetErrs();
     return this.outputSetErrsView;
   }
 
-  private ensureContext(context: CharsetConversionContext) {
+  private ensureContext(context: BinaryKernelContext) {
     if (this.loadedContext === context) {
       return;
     }

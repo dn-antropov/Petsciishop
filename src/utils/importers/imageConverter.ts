@@ -216,7 +216,8 @@ export const CONVERTER_PRESETS = [
 // --- Results ---
 
 export type ConverterCharset = 'upper' | 'lower';
-export type StandardAccelerationPath = 'wasm' | 'js';
+export type ConverterAccelerationPath = 'wasm' | 'js';
+export type StandardAccelerationPath = ConverterAccelerationPath;
 
 export interface ConverterFontBits {
   upper: number[];
@@ -232,7 +233,7 @@ export interface ConversionResult {
   mcmSharedColors: number[];
   charset: ConverterCharset;
   mode: 'standard' | 'ecm' | 'mcm';
-  accelerationBackend?: StandardAccelerationPath;
+  accelerationBackend?: ConverterAccelerationPath;
 }
 
 export interface ConversionOutputs {
@@ -255,9 +256,13 @@ export interface CharsetConversionContext {
   ref: Uint8Array[];
   refSetCount: Int32Array;
   setPositions: Uint8Array[];
+  flatPositions: Uint8Array;
+  positionOffsets: Int32Array;
   refMcm?: Uint8Array[];
   refMcmBpCount?: Int32Array[];
   refMcmPositions?: BitPairPositionSets[];
+  flatMcmPositions?: Uint8Array[];
+  mcmPositionOffsets?: Int32Array[];
 }
 
 interface SourceCellData {
@@ -358,14 +363,38 @@ function buildSetPositions(ref: Uint8Array[]): Uint8Array[] {
   });
 }
 
+function buildFlatPositions(setPositions: Uint8Array[]): {
+  flatPositions: Uint8Array;
+  positionOffsets: Int32Array;
+} {
+  const allPositions: number[] = [];
+  const positionOffsets = new Int32Array(setPositions.length + 1);
+  for (let ch = 0; ch < setPositions.length; ch++) {
+    positionOffsets[ch] = allPositions.length;
+    const positions = setPositions[ch];
+    for (let i = 0; i < positions.length; i++) {
+      allPositions.push(positions[i]);
+    }
+  }
+  positionOffsets[setPositions.length] = allPositions.length;
+  return {
+    flatPositions: Uint8Array.from(allPositions),
+    positionOffsets,
+  };
+}
+
 function buildRefMcmData(ref: Uint8Array[]): {
   refMcm: Uint8Array[];
   refMcmBpCount: Int32Array[];
   refMcmPositions: BitPairPositionSets[];
+  flatMcmPositions: Uint8Array[];
+  mcmPositionOffsets: Int32Array[];
 } {
   const refMcm: Uint8Array[] = [];
   const refMcmBpCount: Int32Array[] = [];
   const refMcmPositions: BitPairPositionSets[] = [];
+  const flatMcmPositions = [[], [], [], []] as number[][];
+  const mcmPositionOffsets = Array.from({ length: 4 }, () => new Int32Array(257));
 
   for (let ch = 0; ch < 256; ch++) {
     const bits = new Uint8Array(32);
@@ -392,20 +421,48 @@ function buildRefMcmData(ref: Uint8Array[]): {
       Uint8Array.from(posLists[2]),
       Uint8Array.from(posLists[3]),
     ]);
+    for (let bp = 0; bp < 4; bp++) {
+      mcmPositionOffsets[bp][ch] = flatMcmPositions[bp].length;
+      for (let i = 0; i < posLists[bp].length; i++) {
+        flatMcmPositions[bp].push(posLists[bp][i]);
+      }
+    }
   }
 
-  return { refMcm, refMcmBpCount, refMcmPositions };
+  for (let bp = 0; bp < 4; bp++) {
+    mcmPositionOffsets[bp][256] = flatMcmPositions[bp].length;
+  }
+
+  return {
+    refMcm,
+    refMcmBpCount,
+    refMcmPositions,
+    flatMcmPositions: flatMcmPositions.map(positions => Uint8Array.from(positions)),
+    mcmPositionOffsets,
+  };
 }
 
 export function buildCharsetConversionContext(fontBits: number[], includeMcm: boolean): CharsetConversionContext {
   const ref = buildRefChars(fontBits);
   const setPositions = buildSetPositions(ref);
+  const { flatPositions, positionOffsets } = buildFlatPositions(setPositions);
   const refSetCount = new Int32Array(setPositions.map(positions => positions.length));
   if (!includeMcm) {
-    return { ref, refSetCount, setPositions };
+    return { ref, refSetCount, setPositions, flatPositions, positionOffsets };
   }
-  const { refMcm, refMcmBpCount, refMcmPositions } = buildRefMcmData(ref);
-  return { ref, refSetCount, setPositions, refMcm, refMcmBpCount, refMcmPositions };
+  const { refMcm, refMcmBpCount, refMcmPositions, flatMcmPositions, mcmPositionOffsets } = buildRefMcmData(ref);
+  return {
+    ref,
+    refSetCount,
+    setPositions,
+    flatPositions,
+    positionOffsets,
+    refMcm,
+    refMcmBpCount,
+    refMcmPositions,
+    flatMcmPositions,
+    mcmPositionOffsets,
+  };
 }
 
 // --- Image Resize / Preprocessing ---
@@ -947,31 +1004,25 @@ function buildBinaryBestErrorByBackground(
   metrics: PaletteMetricData,
   settings: ConverterSettings,
   charLimit: number,
-  fgLimit: number
+  fgLimit: number,
+  scoringKernel?: BinaryCandidateScoringKernel
 ): Float64Array {
   const best = new Float64Array(16);
   best.fill(Infinity);
-  const setErr = new Float64Array(16);
+  const setErrMatrix = computeBinarySetErrMatrix(cell, context, scoringKernel);
 
   for (let ch = 0; ch < charLimit; ch++) {
-    setErr.fill(0);
-    const positions = context.setPositions[ch];
-    for (let i = 0; i < positions.length; i++) {
-      const base = positions[i] * 16;
-      for (let color = 0; color < 16; color++) {
-        setErr[color] += cell.weightedPixelErrors[base + color];
-      }
-    }
+    const setErrBase = ch * 16;
 
     const nSet = context.refSetCount[ch];
     for (let bg = 0; bg < 16; bg++) {
-      const bgErr = cell.totalErrByColor[bg] - setErr[bg];
+      const bgErr = cell.totalErrByColor[bg] - setErrMatrix[setErrBase + bg];
       if (bgErr >= best[bg]) continue;
       for (let fg = 0; fg < fgLimit; fg++) {
         if (fg === bg) continue;
         const renderedAvgL = (nSet * metrics.pL[fg] + (PIXELS_PER_CELL - nSet) * metrics.pL[bg]) / PIXELS_PER_CELL;
         const lumDiff = cell.avgL - renderedAvgL;
-        const total = bgErr + setErr[fg] + settings.lumMatchWeight * lumDiff * lumDiff;
+        const total = bgErr + setErrMatrix[setErrBase + fg] + settings.lumMatchWeight * lumDiff * lumDiff;
         if (total < best[bg]) best[bg] = total;
       }
     }
@@ -988,34 +1039,27 @@ function buildBinaryCandidatePool(
   charLimit: number,
   backgrounds: number[],
   fgLimit: number,
-  poolSize: number
+  poolSize: number,
+  scoringKernel?: BinaryCandidateScoringKernel
 ): ScreenCandidate[] {
   const pool: ScreenCandidate[] = [];
-  const setErr = new Float64Array(16);
+  const setErrMatrix = computeBinarySetErrMatrix(cell, context, scoringKernel);
 
   for (let ch = 0; ch < charLimit; ch++) {
-    setErr.fill(0);
-    const positions = context.setPositions[ch];
-    for (let i = 0; i < positions.length; i++) {
-      const base = positions[i] * 16;
-      for (let color = 0; color < 16; color++) {
-        setErr[color] += cell.weightedPixelErrors[base + color];
-      }
-    }
-
+    const setErrBase = ch * 16;
     const nSet = context.refSetCount[ch];
     const worst = pool.length >= poolSize ? pool[pool.length - 1].baseError : Infinity;
 
     for (let bi = 0; bi < backgrounds.length; bi++) {
       const bg = backgrounds[bi];
-      const bgErr = cell.totalErrByColor[bg] - setErr[bg];
+      const bgErr = cell.totalErrByColor[bg] - setErrMatrix[setErrBase + bg];
       if (bgErr >= worst) continue;
 
       for (let fg = 0; fg < fgLimit; fg++) {
         if (fg === bg) continue;
         const renderedAvgL = (nSet * metrics.pL[fg] + (PIXELS_PER_CELL - nSet) * metrics.pL[bg]) / PIXELS_PER_CELL;
         const lumDiff = cell.avgL - renderedAvgL;
-        const total = bgErr + setErr[fg] + settings.lumMatchWeight * lumDiff * lumDiff;
+        const total = bgErr + setErrMatrix[setErrBase + fg] + settings.lumMatchWeight * lumDiff * lumDiff;
         if (pool.length < poolSize || total < pool[pool.length - 1].baseError) {
           insertTopCandidate(pool, makeBinaryCandidate(context.ref[ch], ch, bg, fg, total, metrics.pairDiff, metrics.maxPairDiff), poolSize);
         }
@@ -1036,36 +1080,164 @@ interface McmSampleSummary {
   totalErrByColor: Float32Array;
 }
 
-function buildMcmSampleSummary(cell: SourceCellData, context: CharsetConversionContext): McmSampleSummary {
-  const hiresSetErrByChar = new Float32Array(256 * 16);
-  const mcmBpErrByChar = new Float32Array(256 * 4 * 16);
+export interface BinaryCandidateScoringKernel {
+  computeSetErrs(weightedPixelErrors: Float32Array, context: Pick<CharsetConversionContext, 'flatPositions' | 'positionOffsets'>): Float32Array;
+}
 
+export interface McmCandidateScoringKernel {
+  computeMatrices(
+    weightedPixelErrors: Float32Array,
+    weightedPairErrors: Float32Array,
+    context: Pick<CharsetConversionContext, 'flatPositions' | 'positionOffsets' | 'flatMcmPositions' | 'mcmPositionOffsets'>
+  ): {
+    setErrs: Float32Array;
+    bitPairErrs: Float32Array;
+  };
+}
+
+const ENABLE_WASM_DIAGNOSTICS = import.meta.env.DEV;
+let binaryPrecisionChecksRemaining = 12;
+let mcmPrecisionChecksRemaining = 12;
+const modeParityChecksRemaining: Record<'ecm' | 'mcm', number> = { ecm: 1, mcm: 1 };
+
+function computeBinarySetErrMatrixJs(
+  cell: SourceCellData,
+  context: CharsetConversionContext
+): Float64Array {
+  const setErr = new Float64Array(256 * 16);
   for (let ch = 0; ch < 256; ch++) {
-    const setPositions = context.setPositions[ch];
-    for (let i = 0; i < setPositions.length; i++) {
-      const base = setPositions[i] * 16;
-      const out = ch * 16;
+    const positions = context.setPositions[ch];
+    const outBase = ch * 16;
+    for (let i = 0; i < positions.length; i++) {
+      const base = positions[i] * 16;
       for (let color = 0; color < 16; color++) {
-        hiresSetErrByChar[out + color] += cell.weightedPixelErrors[base + color];
+        setErr[outBase + color] += cell.weightedPixelErrors[base + color];
       }
     }
+  }
+  return setErr;
+}
 
+function computeMcmMatricesJs(
+  cell: SourceCellData,
+  context: CharsetConversionContext
+): { setErrs: Float64Array; bitPairErrs: Float32Array } {
+  const setErrs = computeBinarySetErrMatrixJs(cell, context);
+  const bitPairErrs = new Float32Array(256 * 4 * 16);
+  for (let ch = 0; ch < 256; ch++) {
     const bpPositions = context.refMcmPositions![ch];
     for (let bp = 0; bp < 4; bp++) {
       const positions = bpPositions[bp];
-      const out = (ch * 4 + bp) * 16;
+      const outBase = (ch * 4 + bp) * 16;
       for (let i = 0; i < positions.length; i++) {
         const base = positions[i] * 16;
         for (let color = 0; color < 16; color++) {
-          mcmBpErrByChar[out + color] += cell.weightedPairErrors![base + color];
+          bitPairErrs[outBase + color] += cell.weightedPairErrors![base + color];
         }
       }
     }
   }
+  return { setErrs, bitPairErrs };
+}
 
+function logArrayDiff(label: string, reference: ArrayLike<number>, candidate: ArrayLike<number>) {
+  let maxAbsDiff = 0;
+  let mismatchCount = 0;
+  for (let i = 0; i < reference.length; i++) {
+    const absDiff = Math.abs(reference[i] - candidate[i]);
+    if (absDiff > maxAbsDiff) {
+      maxAbsDiff = absDiff;
+    }
+    if (absDiff > 1e-6) {
+      mismatchCount++;
+    }
+  }
+  console.info(`[TruSkii3000] ${label} parity`, {
+    compared: reference.length,
+    mismatchCount,
+    maxAbsDiff,
+  });
+}
+
+function arraysEqual(a: number[], b: number[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+function compareModeConversions(
+  mode: 'ecm' | 'mcm',
+  reference: ConversionResult,
+  candidate: ConversionResult
+) {
+  const equal =
+    reference.charset === candidate.charset &&
+    reference.backgroundColor === candidate.backgroundColor &&
+    arraysEqual(reference.screencodes, candidate.screencodes) &&
+    arraysEqual(reference.colors, candidate.colors) &&
+    arraysEqual(reference.ecmBgColors, candidate.ecmBgColors) &&
+    arraysEqual(reference.bgIndices, candidate.bgIndices) &&
+    arraysEqual(reference.mcmSharedColors, candidate.mcmSharedColors);
+
+  console.info(`[TruSkii3000] ${mode.toUpperCase()} JS/WASM conversion parity`, {
+    equal,
+    charsetMatch: reference.charset === candidate.charset,
+    backgroundMatch: reference.backgroundColor === candidate.backgroundColor,
+    screencodesMatch: arraysEqual(reference.screencodes, candidate.screencodes),
+    colorsMatch: arraysEqual(reference.colors, candidate.colors),
+    ecmBgColorsMatch: arraysEqual(reference.ecmBgColors, candidate.ecmBgColors),
+    bgIndicesMatch: arraysEqual(reference.bgIndices, candidate.bgIndices),
+    mcmSharedColorsMatch: arraysEqual(reference.mcmSharedColors, candidate.mcmSharedColors),
+  });
+}
+
+function computeBinarySetErrMatrix(
+  cell: SourceCellData,
+  context: CharsetConversionContext,
+  scoringKernel?: BinaryCandidateScoringKernel
+): Float32Array | Float64Array {
+  if (scoringKernel) {
+    const setErr = scoringKernel.computeSetErrs(cell.weightedPixelErrors, context);
+    if (ENABLE_WASM_DIAGNOSTICS && binaryPrecisionChecksRemaining > 0) {
+      binaryPrecisionChecksRemaining--;
+      logArrayDiff('Binary setErr matrix', computeBinarySetErrMatrixJs(cell, context), setErr);
+    }
+    return setErr;
+  }
+
+  return computeBinarySetErrMatrixJs(cell, context);
+}
+
+function computeMcmMatrices(
+  cell: SourceCellData,
+  context: CharsetConversionContext,
+  scoringKernel?: McmCandidateScoringKernel
+): { setErrs: Float32Array | Float64Array; bitPairErrs: Float32Array } {
+  if (scoringKernel && cell.weightedPairErrors) {
+    const matrices = scoringKernel.computeMatrices(cell.weightedPixelErrors, cell.weightedPairErrors, context);
+    if (ENABLE_WASM_DIAGNOSTICS && mcmPrecisionChecksRemaining > 0) {
+      mcmPrecisionChecksRemaining--;
+      const reference = computeMcmMatricesJs(cell, context);
+      logArrayDiff('MCM setErr matrix', reference.setErrs, matrices.setErrs);
+      logArrayDiff('MCM bitPair matrix', reference.bitPairErrs, matrices.bitPairErrs);
+    }
+    return matrices;
+  }
+
+  return computeMcmMatricesJs(cell, context);
+}
+
+function buildMcmSampleSummary(
+  cell: SourceCellData,
+  context: CharsetConversionContext,
+  scoringKernel?: McmCandidateScoringKernel
+): McmSampleSummary {
+  const { setErrs, bitPairErrs } = computeMcmMatrices(cell, context, scoringKernel);
   return {
-    hiresSetErrByChar,
-    mcmBpErrByChar,
+    hiresSetErrByChar: Float32Array.from(setErrs),
+    mcmBpErrByChar: bitPairErrs,
     avgL: cell.avgL,
     totalErrByColor: cell.totalErrByColor,
   };
@@ -1130,51 +1302,37 @@ function buildMcmCandidatePool(
   bg: number,
   mc1: number,
   mc2: number,
-  poolSize: number
+  poolSize: number,
+  scoringKernel?: McmCandidateScoringKernel
 ): ScreenCandidate[] {
   const pool: ScreenCandidate[] = [];
-  const setErr = new Float64Array(16);
-  const fgErr = new Float64Array(8);
+  const { setErrs, bitPairErrs } = computeMcmMatrices(cell, context, scoringKernel);
 
   for (let ch = 0; ch < 256; ch++) {
-    setErr.fill(0);
-    const setPositions = context.setPositions[ch];
-    for (let i = 0; i < setPositions.length; i++) {
-      const base = setPositions[i] * 16;
-      for (let color = 0; color < 16; color++) {
-        setErr[color] += cell.weightedPixelErrors[base + color];
-      }
-    }
-
-    const bgErr = cell.totalErrByColor[bg] - setErr[bg];
+    const hiresBase = ch * 16;
+    const bgErr = cell.totalErrByColor[bg] - setErrs[hiresBase + bg];
     if (pool.length < poolSize || bgErr < pool[pool.length - 1].baseError) {
       const nSet = context.refSetCount[ch];
       for (let fg = 0; fg < 8; fg++) {
         if (fg === bg) continue;
         const renderedAvgL = (nSet * metrics.pL[fg] + (PIXELS_PER_CELL - nSet) * metrics.pL[bg]) / PIXELS_PER_CELL;
         const lumDiff = cell.avgL - renderedAvgL;
-        const total = bgErr + setErr[fg] + settings.lumMatchWeight * lumDiff * lumDiff;
+        const total = bgErr + setErrs[hiresBase + fg] + settings.lumMatchWeight * lumDiff * lumDiff;
         if (pool.length < poolSize || total < pool[pool.length - 1].baseError) {
           insertTopCandidate(pool, makeBinaryCandidate(context.ref[ch], ch, bg, fg, total, metrics.pairDiff, metrics.maxPairDiff), poolSize);
         }
       }
     }
 
-    fgErr.fill(0);
-    const bpPositions = context.refMcmPositions![ch];
-    let fixedErr = 0;
-    for (let i = 0; i < bpPositions[0].length; i++) fixedErr += cell.weightedPairErrors![bpPositions[0][i] * 16 + bg];
-    for (let i = 0; i < bpPositions[1].length; i++) fixedErr += cell.weightedPairErrors![bpPositions[1][i] * 16 + mc1];
-    for (let i = 0; i < bpPositions[2].length; i++) fixedErr += cell.weightedPairErrors![bpPositions[2][i] * 16 + mc2];
-    for (let i = 0; i < bpPositions[3].length; i++) {
-      const base = bpPositions[3][i] * 16;
-      for (let fg = 0; fg < 8; fg++) {
-        fgErr[fg] += cell.weightedPairErrors![base + fg];
-      }
-    }
+    const bpBase = ch * 64;
+    const fixedErr =
+      bitPairErrs[bpBase + bg] +
+      bitPairErrs[bpBase + 16 + mc1] +
+      bitPairErrs[bpBase + 32 + mc2];
 
     if (pool.length < poolSize || 2 * fixedErr < pool[pool.length - 1].baseError) {
       const counts = context.refMcmBpCount![ch];
+      const bp3Base = bpBase + 48;
       for (let fg = 0; fg < 8; fg++) {
         const renderedAvgL =
           (counts[0] * metrics.pL[bg] +
@@ -1182,7 +1340,7 @@ function buildMcmCandidatePool(
            counts[2] * metrics.pL[mc2] +
            counts[3] * metrics.pL[fg]) / MCM_PIXELS_PER_CELL;
         const lumDiff = cell.avgL - renderedAvgL;
-        const total = 2 * (fixedErr + fgErr[fg]) + settings.lumMatchWeight * lumDiff * lumDiff;
+        const total = 2 * (fixedErr + bitPairErrs[bp3Base + fg]) + settings.lumMatchWeight * lumDiff * lumDiff;
         if (pool.length < poolSize || total < pool[pool.length - 1].baseError) {
           insertTopCandidate(pool, makeMcmCandidate(context.refMcm![ch], ch, fg | 8, bg, mc1, mc2, total, metrics.pairDiff, metrics.maxPairDiff), poolSize);
         }
@@ -1345,12 +1503,13 @@ async function buildBinaryCandidatePools(
   backgrounds: number[],
   fgLimit: number,
   poolSize: number,
+  scoringKernel?: BinaryCandidateScoringKernel,
   shouldCancel?: () => boolean
 ): Promise<ScreenCandidate[][]> {
   const candidatePools = new Array<ScreenCandidate[]>(cells.length);
   for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
     candidatePools[cellIndex] = buildBinaryCandidatePool(
-      cells[cellIndex], context, metrics, settings, charLimit, backgrounds, fgLimit, poolSize
+      cells[cellIndex], context, metrics, settings, charLimit, backgrounds, fgLimit, poolSize, scoringKernel
     );
     if ((cellIndex & 127) === 0) {
       await yieldToUI(shouldCancel);
@@ -1368,12 +1527,13 @@ async function buildMcmCandidatePools(
   mc1: number,
   mc2: number,
   poolSize: number,
+  scoringKernel?: McmCandidateScoringKernel,
   shouldCancel?: () => boolean
 ): Promise<ScreenCandidate[][]> {
   const candidatePools = new Array<ScreenCandidate[]>(cells.length);
   for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
     candidatePools[cellIndex] = buildMcmCandidatePool(
-      cells[cellIndex], context, metrics, settings, bg, mc1, mc2, poolSize
+      cells[cellIndex], context, metrics, settings, bg, mc1, mc2, poolSize, scoringKernel
     );
     if ((cellIndex & 127) === 0) {
       await yieldToUI(shouldCancel);
@@ -1413,13 +1573,16 @@ async function solveEcmForCombo(
   metrics: PaletteMetricData,
   settings: ConverterSettings,
   palette: PaletteColor[] | undefined,
+  scoringKernel: BinaryCandidateScoringKernel | undefined,
   onProgress: ProgressCallback,
   shouldCancel?: () => boolean
 ): Promise<SolvedModeCandidate> {
+  const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const backgroundSets = buildEcmBackgroundSets(settings.manualBgColor);
   const sampleIndices = getSampleIndices(analysis.rankedIndices, ECM_SAMPLE_COUNT);
+  const tCoarse0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const sampleBestByCell = sampleIndices.map(cellIndex =>
-    buildBinaryBestErrorByBackground(analysis.cells[cellIndex], context, metrics, settings, 64, 16)
+    buildBinaryBestErrorByBackground(analysis.cells[cellIndex], context, metrics, settings, 64, 16, scoringKernel)
   );
 
   const rankedSets = backgroundSets.map(set => {
@@ -1431,17 +1594,24 @@ async function solveEcmForCombo(
     return { set, score };
   }).sort((a, b) => a.score - b.score)
     .slice(0, Math.min(ECM_FINALIST_COUNT, backgroundSets.length));
+  const tCoarse1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
 
   let best: SolvedModeCandidate | undefined;
+  let poolTime = 0;
+  let solveTime = 0;
   for (let index = 0; index < rankedSets.length; index++) {
     const set = rankedSets[index].set;
     onProgress('Converting', `ECM backgrounds ${set.join(',')} (${index + 1}/${rankedSets.length})`, Math.round((index / Math.max(1, rankedSets.length)) * 100));
     await yieldToUI(shouldCancel);
 
+    const tPool0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
     const candidatePools = await buildBinaryCandidatePools(
-      analysis.cells, context, metrics, settings, 64, set, 16, ECM_POOL_SIZE, shouldCancel
+      analysis.cells, context, metrics, settings, 64, set, 16, ECM_POOL_SIZE, scoringKernel, shouldCancel
     );
+    poolTime += (typeof performance !== 'undefined' ? performance.now() : Date.now()) - tPool0;
+    const tSolve0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
     const solved = await solveScreen(candidatePools, analysis, metrics, shouldCancel);
+    solveTime += (typeof performance !== 'undefined' ? performance.now() : Date.now()) - tSolve0;
     const orderedBgs = chooseOrderedEcmBackgrounds(set, solved.selected, settings.manualBgColor);
     const bgMap = new Map<number, number>();
     orderedBgs.forEach((color, bgIndex) => bgMap.set(color, bgIndex));
@@ -1467,6 +1637,16 @@ async function solveEcmForCombo(
     });
   }
 
+  const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  console.info('[TruSkii3000] ECM stages', {
+    backend: scoringKernel ? 'wasm' : 'js',
+    coarseMs: Number((tCoarse1 - tCoarse0).toFixed(1)),
+    poolsMs: Number(poolTime.toFixed(1)),
+    solveMs: Number(solveTime.toFixed(1)),
+    totalMs: Number((t1 - t0).toFixed(1)),
+    finalists: rankedSets.length,
+  });
+
   return best!;
 }
 
@@ -1476,11 +1656,14 @@ async function solveMcmForCombo(
   metrics: PaletteMetricData,
   settings: ConverterSettings,
   palette: PaletteColor[] | undefined,
+  scoringKernel: McmCandidateScoringKernel | undefined,
   onProgress: ProgressCallback,
   shouldCancel?: () => boolean
 ): Promise<SolvedModeCandidate> {
+  const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const sampleIndices = getSampleIndices(analysis.rankedIndices, MCM_SAMPLE_COUNT);
-  const sampleSummaries = sampleIndices.map(cellIndex => buildMcmSampleSummary(analysis.cells[cellIndex], context));
+  const tGlobals0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const sampleSummaries = sampleIndices.map(cellIndex => buildMcmSampleSummary(analysis.cells[cellIndex], context, scoringKernel));
   const triples = buildMcmTriples(settings.manualBgColor);
   const rankedTriples = new Array<{ triple: [number, number, number]; score: number }>(triples.length);
 
@@ -1503,8 +1686,11 @@ async function solveMcmForCombo(
 
   rankedTriples.sort((a, b) => a.score - b.score);
   rankedTriples.length = Math.min(MCM_FINALIST_COUNT, rankedTriples.length);
+  const tGlobals1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
 
   let best: SolvedModeCandidate | undefined;
+  let poolTime = 0;
+  let solveTime = 0;
   for (let finalistIndex = 0; finalistIndex < rankedTriples.length; finalistIndex++) {
     const [bg, mc1, mc2] = rankedTriples[finalistIndex].triple;
     onProgress(
@@ -1514,10 +1700,14 @@ async function solveMcmForCombo(
     );
     await yieldToUI(shouldCancel);
 
+    const tPool0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
     const candidatePools = await buildMcmCandidatePools(
-      analysis.cells, context, metrics, settings, bg, mc1, mc2, MCM_POOL_SIZE, shouldCancel
+      analysis.cells, context, metrics, settings, bg, mc1, mc2, MCM_POOL_SIZE, scoringKernel, shouldCancel
     );
+    poolTime += (typeof performance !== 'undefined' ? performance.now() : Date.now()) - tPool0;
+    const tSolve0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
     const solved = await solveScreen(candidatePools, analysis, metrics, shouldCancel);
+    solveTime += (typeof performance !== 'undefined' ? performance.now() : Date.now()) - tSolve0;
     const conversion: ConversionResult = {
       screencodes: solved.screencodes,
       colors: solved.colors,
@@ -1538,7 +1728,46 @@ async function solveMcmForCombo(
     });
   }
 
+  const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  console.info('[TruSkii3000] MCM stages', {
+    backend: scoringKernel ? 'wasm' : 'js',
+    globalsMs: Number((tGlobals1 - tGlobals0).toFixed(1)),
+    poolsMs: Number(poolTime.toFixed(1)),
+    solveMs: Number(solveTime.toFixed(1)),
+    totalMs: Number((t1 - t0).toFixed(1)),
+    finalists: rankedTriples.length,
+  });
+
   return best!;
+}
+
+async function solveModeForAnalysis(
+  mode: 'ecm' | 'mcm',
+  analysis: SourceAnalysis,
+  settings: ConverterSettings,
+  contexts: Record<ConverterCharset, CharsetConversionContext>,
+  metrics: PaletteMetricData,
+  binaryScoringKernel: BinaryCandidateScoringKernel | undefined,
+  mcmScoringKernel: McmCandidateScoringKernel | undefined,
+  onProgress: ProgressCallback,
+  shouldCancel?: () => boolean
+): Promise<SolvedModeCandidate | undefined> {
+  let best: SolvedModeCandidate | undefined;
+  const backend: ConverterAccelerationPath = mode === 'ecm'
+    ? (binaryScoringKernel ? 'wasm' : 'js')
+    : (mcmScoringKernel ? 'wasm' : 'js');
+
+  for (const charset of ['upper', 'lower'] as const) {
+    const context = contexts[charset];
+    const solved = mode === 'ecm'
+      ? await solveEcmForCombo(analysis, context, metrics, settings, undefined, binaryScoringKernel, onProgress, shouldCancel)
+      : await solveMcmForCombo(analysis, context, metrics, settings, undefined, mcmScoringKernel, onProgress, shouldCancel);
+    solved.conversion.charset = charset;
+    solved.conversion.accelerationBackend = backend;
+    best = pickBetterModeCandidate(best, solved);
+  }
+
+  return best;
 }
 
 export async function solveModeOffsetWorker(
@@ -1548,6 +1777,8 @@ export async function solveModeOffsetWorker(
   contexts: Record<ConverterCharset, CharsetConversionContext>,
   metrics: PaletteMetricData,
   offset: AlignmentOffset,
+  binaryScoringKernel: BinaryCandidateScoringKernel | undefined,
+  mcmScoringKernel: McmCandidateScoringKernel | undefined,
   onProgress: ProgressCallback,
   shouldCancel?: () => boolean
 ): Promise<WorkerSolvedModeCandidate | undefined> {
@@ -1562,14 +1793,37 @@ export async function solveModeOffsetWorker(
   );
   throwIfCancelled(shouldCancel);
 
-  let best: SolvedModeCandidate | undefined;
-  for (const charset of ['upper', 'lower'] as const) {
-    const context = contexts[charset];
-    const solved = mode === 'ecm'
-      ? await solveEcmForCombo(analysis, context, metrics, settings, undefined, onProgress, shouldCancel)
-      : await solveMcmForCombo(analysis, context, metrics, settings, undefined, onProgress, shouldCancel);
-    solved.conversion.charset = charset;
-    best = pickBetterModeCandidate(best, solved);
+  const best = await solveModeForAnalysis(
+    mode,
+    analysis,
+    settings,
+    contexts,
+    metrics,
+    binaryScoringKernel,
+    mcmScoringKernel,
+    onProgress,
+    shouldCancel
+  );
+
+  if (ENABLE_WASM_DIAGNOSTICS && best && modeParityChecksRemaining[mode] > 0) {
+    const usingWasm = mode === 'ecm' ? Boolean(binaryScoringKernel) : Boolean(mcmScoringKernel);
+    if (usingWasm) {
+      modeParityChecksRemaining[mode]--;
+      const jsReference = await solveModeForAnalysis(
+        mode,
+        analysis,
+        settings,
+        contexts,
+        metrics,
+        undefined,
+        undefined,
+        () => {},
+        shouldCancel
+      );
+      if (jsReference) {
+        compareModeConversions(mode, jsReference.conversion, best.conversion);
+      }
+    }
   }
 
   return best
@@ -1669,6 +1923,7 @@ function renderMcmPreview(
 
 export type ProgressCallback = (stage: string, detail: string, pct: number) => void;
 export type StandardBackendCallback = (backend: StandardAccelerationPath) => void;
+export type ModeBackendCallback = (mode: 'standard' | 'ecm' | 'mcm', backend: ConverterAccelerationPath) => void;
 
 function renderSolvedModePreview(
   candidate: Pick<SolvedModeCandidate, 'conversion' | 'error'>,
@@ -1860,11 +2115,13 @@ async function solveModeAcrossOffsetsSequential(
   palette: PaletteColor[],
   metrics: PaletteMetricData,
   onProgress: ProgressCallback,
+  onModeBackend?: ModeBackendCallback,
   shouldCancel?: () => boolean
 ): Promise<SolvedModeCandidate | undefined> {
   const offsets = buildStandardAlignmentOffsets();
   let best: WorkerSolvedModeCandidate | undefined;
   const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  onModeBackend?.(mode, 'js');
   onProgress('Alignment', `${mode.toUpperCase()} 0 of ${offsets.length}`, 0);
 
   for (let offsetIndex = 0; offsetIndex < offsets.length; offsetIndex++) {
@@ -1877,6 +2134,8 @@ async function solveModeAcrossOffsetsSequential(
       contexts,
       metrics,
       offset,
+      undefined,
+      undefined,
       createScopedProgress(
         onProgress,
         Math.round((offsetIndex / Math.max(1, offsets.length)) * 100),
@@ -1914,6 +2173,7 @@ async function solveModeAcrossOffsets(
   metrics: PaletteMetricData,
   fontBitsByCharset: ConverterFontBits,
   onProgress: ProgressCallback,
+  onModeBackend?: ModeBackendCallback,
   shouldCancel?: () => boolean
 ): Promise<SolvedModeCandidate | undefined> {
   try {
@@ -1923,6 +2183,7 @@ async function solveModeAcrossOffsets(
       settings,
       fontBitsByCharset,
       onProgress,
+      backend => onModeBackend?.(mode, backend),
       shouldCancel
     );
     if (workerSolved) {
@@ -1944,6 +2205,7 @@ async function solveModeAcrossOffsets(
     palette,
     metrics,
     onProgress,
+    onModeBackend,
     shouldCancel
   );
 }
@@ -1957,7 +2219,7 @@ async function solveModeAcrossCombos(
   metrics: PaletteMetricData,
   fontBitsByCharset: ConverterFontBits,
   onProgress: ProgressCallback,
-  onStandardBackend?: StandardBackendCallback,
+  onModeBackend?: ModeBackendCallback,
   shouldCancel?: () => boolean
 ): Promise<SolvedModeCandidate | undefined> {
   if (mode === 'standard') {
@@ -1969,7 +2231,7 @@ async function solveModeAcrossCombos(
       metrics,
       fontBitsByCharset,
       onProgress,
-      onStandardBackend,
+      backend => onModeBackend?.('standard', backend),
       shouldCancel
     );
   }
@@ -1982,6 +2244,7 @@ async function solveModeAcrossCombos(
     metrics,
     fontBitsByCharset,
     onProgress,
+    onModeBackend,
     shouldCancel
   );
 }
@@ -1993,7 +2256,7 @@ export async function convertImage(
   settings: ConverterSettings,
   fontBitsByCharset: ConverterFontBits,
   onProgress: ProgressCallback,
-  onStandardBackend?: StandardBackendCallback,
+  onModeBackend?: ModeBackendCallback,
   shouldCancel?: () => boolean
 ): Promise<ConversionOutputs> {
   const paletteData = PALETTES.find(p => p.id === settings.paletteId) || PALETTES[0];
@@ -2031,7 +2294,7 @@ export async function convertImage(
       metrics,
       fontBitsByCharset,
       scopedProgress,
-      mode === 'standard' ? onStandardBackend : undefined,
+      onModeBackend,
       shouldCancel
     );
     if (!solved) continue;

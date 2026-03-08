@@ -41,8 +41,8 @@ export type ConverterWorkerRequestMessage =
 
 export interface ConverterWorkerReadyMessage {
   type: 'ready';
-  wasmEnabled: boolean;
-  wasmError?: string;
+  wasmByMode: Record<WorkerMode, boolean>;
+  wasmErrors?: Partial<Record<WorkerMode, string>>;
 }
 
 export interface ConverterWorkerOffsetResultMessage {

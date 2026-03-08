@@ -5,8 +5,10 @@ import {
   solveModeOffsetWorker,
 } from './imageConverter';
 import type {
+  BinaryCandidateScoringKernel,
   CharsetConversionContext as ModeCharsetConversionContext,
   ConverterCharset,
+  McmCandidateScoringKernel,
   PaletteMetricData as ModePaletteMetricData,
   PreprocessedFittedImage,
 } from './imageConverter';
@@ -23,6 +25,7 @@ import type {
   StandardCandidateScoringKernel,
 } from './imageConverterStandardCore';
 import { StandardWasmKernel } from './imageConverterStandardWasm';
+import { McmWasmKernel } from './imageConverterMcmWasm';
 import type {
   ConverterWorkerRequestMessage,
   ConverterWorkerResponseMessage,
@@ -39,6 +42,8 @@ type WorkerState = {
   standardPaletteCache: Map<string, PaletteMetricData>;
   modePaletteCache: Map<string, ModePaletteMetricData>;
   scoringKernel: StandardCandidateScoringKernel | null;
+  modeBinaryScoringKernel: BinaryCandidateScoringKernel | null;
+  mcmScoringKernel: McmCandidateScoringKernel | null;
 };
 
 const state: WorkerState = {
@@ -49,6 +54,8 @@ const state: WorkerState = {
   standardPaletteCache: new Map(),
   modePaletteCache: new Map(),
   scoringKernel: null,
+  modeBinaryScoringKernel: null,
+  mcmScoringKernel: null,
 };
 
 function post(message: ConverterWorkerResponseMessage) {
@@ -84,17 +91,35 @@ self.onmessage = async (event: MessageEvent<ConverterWorkerRequestMessage>) => {
         upper: buildModeCharsetConversionContext(message.fontBitsByCharset.upper, true),
         lower: buildModeCharsetConversionContext(message.fontBitsByCharset.lower, true),
       };
-      const wasm = await StandardWasmKernel.create();
-      state.scoringKernel = wasm.kernel;
-      if (wasm.kernel) {
-        console.info('[TruSkii3000] Standard worker initialized with WASM kernel.');
+      const [standardWasm, mcmWasm] = await Promise.all([
+        StandardWasmKernel.create(),
+        McmWasmKernel.create(),
+      ]);
+      state.scoringKernel = standardWasm.kernel;
+      state.modeBinaryScoringKernel = standardWasm.kernel;
+      state.mcmScoringKernel = mcmWasm.kernel;
+      if (standardWasm.kernel) {
+        console.info('[TruSkii3000] Standard/ECM worker initialized with WASM kernel.');
       } else {
-        console.warn('[TruSkii3000] Standard worker falling back to JavaScript scoring.', wasm.error);
+        console.warn('[TruSkii3000] Standard/ECM worker falling back to JavaScript scoring.', standardWasm.error);
+      }
+      if (mcmWasm.kernel) {
+        console.info('[TruSkii3000] MCM worker initialized with WASM kernel.');
+      } else {
+        console.warn('[TruSkii3000] MCM worker falling back to JavaScript scoring.', mcmWasm.error);
       }
       post({
         type: 'ready',
-        wasmEnabled: Boolean(wasm.kernel),
-        wasmError: wasm.error,
+        wasmByMode: {
+          standard: Boolean(standardWasm.kernel),
+          ecm: Boolean(standardWasm.kernel),
+          mcm: Boolean(mcmWasm.kernel),
+        },
+        wasmErrors: {
+          standard: standardWasm.error,
+          ecm: standardWasm.error,
+          mcm: mcmWasm.error,
+        },
       });
       return;
     }
@@ -141,6 +166,8 @@ self.onmessage = async (event: MessageEvent<ConverterWorkerRequestMessage>) => {
             state.modeContexts,
             getModeMetrics(request.settings.paletteId),
             message.offset,
+            state.modeBinaryScoringKernel ?? undefined,
+            state.mcmScoringKernel ?? undefined,
             () => {},
             shouldCancel
           );

@@ -1,4 +1,5 @@
 import type {
+  ConverterAccelerationPath,
   ConverterFontBits,
   ConverterSettings,
   PreprocessedFittedImage,
@@ -40,8 +41,15 @@ type ActiveRequest = {
   cancelTimer: ReturnType<typeof setInterval> | null;
   startedAt: number;
   onProgress: ProgressCallback;
+  onModeBackend?: (backend: ConverterAccelerationPath) => void;
   resolve: (result: WorkerSolvedModeCandidate | undefined) => void;
   reject: (error: unknown) => void;
+};
+
+type WorkerReadyStatus = {
+  workerId: number;
+  wasmByMode: Record<WorkerMode, boolean>;
+  wasmErrors?: Partial<Record<WorkerMode, string>>;
 };
 
 function buildOffsetJobs(): OffsetJob[] {
@@ -51,6 +59,10 @@ function buildOffsetJobs(): OffsetJob[] {
 class ModeWorkerPool {
   private readonly slots: WorkerSlot[];
   private readonly ready: Promise<void>;
+  private backendByMode: Record<SupportedMode, ConverterAccelerationPath> = {
+    ecm: 'js',
+    mcm: 'js',
+  };
   private nextRequestId = 1;
   private activeRequest: ActiveRequest | null = null;
 
@@ -65,12 +77,16 @@ class ModeWorkerPool {
       currentOffsetId: null,
     }));
 
-    this.ready = Promise.all(this.slots.map(slot => new Promise<void>((resolve, reject) => {
+    this.ready = Promise.all(this.slots.map(slot => new Promise<WorkerReadyStatus>((resolve, reject) => {
       const handleMessage = (event: MessageEvent<ConverterWorkerResponseMessage>) => {
         if (event.data.type === 'ready') {
           slot.worker.removeEventListener('message', handleMessage);
           slot.worker.removeEventListener('error', handleError);
-          resolve();
+          resolve({
+            workerId: slot.id,
+            wasmByMode: event.data.wasmByMode,
+            wasmErrors: event.data.wasmErrors,
+          });
         }
       };
       const handleError = (event: ErrorEvent) => {
@@ -84,7 +100,31 @@ class ModeWorkerPool {
         type: 'init',
         fontBitsByCharset,
       } satisfies ConverterWorkerRequestMessage);
-    }))).then(() => {
+    }))).then(workerStatuses => {
+      this.backendByMode = {
+        ecm: workerStatuses.every(status => status.wasmByMode.ecm) ? 'wasm' : 'js',
+        mcm: workerStatuses.every(status => status.wasmByMode.mcm) ? 'wasm' : 'js',
+      };
+      (['ecm', 'mcm'] as const).forEach(mode => {
+        if (this.backendByMode[mode] === 'wasm') {
+          console.info(`[TruSkii3000] ${mode.toUpperCase()} worker pool ready with WASM in all workers.`, {
+            workerCount: workerStatuses.length,
+            workers: workerStatuses.map(status => ({
+              workerId: status.workerId,
+              backend: 'wasm',
+            })),
+          });
+        } else {
+          console.warn(`[TruSkii3000] ${mode.toUpperCase()} worker pool using JS fallback.`, {
+            workerCount: workerStatuses.length,
+            workers: workerStatuses.map(status => ({
+              workerId: status.workerId,
+              backend: status.wasmByMode[mode] ? 'wasm' : 'js',
+              wasmError: status.wasmErrors?.[mode],
+            })),
+          });
+        }
+      });
       this.slots.forEach(slot => {
         slot.worker.onmessage = event => this.handleWorkerMessage(slot, event.data as ConverterWorkerResponseMessage);
         slot.worker.onerror = event => this.handleWorkerError(slot, event);
@@ -97,6 +137,7 @@ class ModeWorkerPool {
     preprocessed: PreprocessedFittedImage,
     settings: ConverterSettings,
     onProgress: ProgressCallback,
+    onModeBackend?: (backend: ConverterAccelerationPath) => void,
     shouldCancel?: () => boolean
   ): Promise<WorkerSolvedModeCandidate | undefined> {
     await this.ready;
@@ -119,10 +160,12 @@ class ModeWorkerPool {
       cancelTimer: null,
       startedAt: typeof performance !== 'undefined' ? performance.now() : Date.now(),
       onProgress,
+      onModeBackend,
       resolve: () => {},
       reject: () => {},
     };
     this.activeRequest = active;
+    onModeBackend?.(this.backendByMode[mode]);
 
     this.slots.forEach(slot => {
       slot.worker.postMessage({
@@ -238,6 +281,7 @@ class ModeWorkerPool {
       const result = active.best;
       const elapsedMs = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - active.startedAt;
       console.info(`[TruSkii3000] ${active.mode.toUpperCase()} conversion finished.`, {
+        backend: this.backendByMode[active.mode],
         alignments: active.total,
         elapsedMs: Math.round(elapsedMs),
         elapsedSeconds: Number((elapsedMs / 1000).toFixed(2)),
@@ -322,13 +366,14 @@ export async function runModeConversionInWorkers(
   settings: ConverterSettings,
   fontBitsByCharset: ConverterFontBits,
   onProgress: ProgressCallback,
+  onModeBackend?: (backend: ConverterAccelerationPath) => void,
   shouldCancel?: () => boolean
 ): Promise<WorkerSolvedModeCandidate | undefined> {
   if (!supportsWorkerAcceleration()) {
     throw new Error(`${mode.toUpperCase()} worker acceleration is not supported.`);
   }
   const pool = await getPool(fontBitsByCharset);
-  return await pool.run(mode, preprocessed, settings, onProgress, shouldCancel);
+  return await pool.run(mode, preprocessed, settings, onProgress, onModeBackend, shouldCancel);
 }
 
 export function disposeModeConverterWorkers() {
