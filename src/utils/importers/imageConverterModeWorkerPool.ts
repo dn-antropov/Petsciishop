@@ -13,6 +13,7 @@ import type {
   ConverterWorkerResponseMessage,
   WorkerMode,
 } from './imageConverterWorkerProtocol';
+import { shareModePreprocessedImage } from './imageConverterSharedPreprocessed';
 
 type SupportedMode = Exclude<WorkerMode, 'standard'>;
 
@@ -27,6 +28,8 @@ type WorkerSlot = {
   busy: boolean;
   currentRequestId: number | null;
   currentOffsetId: number | null;
+  currentOffset: AlignmentOffset | null;
+  currentProgressPct: number;
 };
 
 type ActiveRequest = {
@@ -52,6 +55,18 @@ type WorkerReadyStatus = {
   wasmErrors?: Partial<Record<WorkerMode, string>>;
 };
 
+type WorkerAccelerationMode = 'auto' | 'js' | 'wasm';
+
+let workerAccelerationMode: WorkerAccelerationMode = 'auto';
+
+export function setModeWorkerAccelerationMode(mode: WorkerAccelerationMode) {
+  if (workerAccelerationMode === mode) {
+    return;
+  }
+  workerAccelerationMode = mode;
+  disposeModeConverterWorkers();
+}
+
 function buildOffsetJobs(): OffsetJob[] {
   return buildAlignmentOffsets().map((offset, offsetId) => ({ offsetId, offset }));
 }
@@ -59,6 +74,7 @@ function buildOffsetJobs(): OffsetJob[] {
 class ModeWorkerPool {
   private readonly slots: WorkerSlot[];
   private readonly ready: Promise<void>;
+  private readonly supportedMode: SupportedMode;
   private backendByMode: Record<SupportedMode, ConverterAccelerationPath> = {
     ecm: 'js',
     mcm: 'js',
@@ -66,7 +82,8 @@ class ModeWorkerPool {
   private nextRequestId = 1;
   private activeRequest: ActiveRequest | null = null;
 
-  constructor(fontBitsByCharset: ConverterFontBits) {
+  constructor(fontBitsByCharset: ConverterFontBits, supportedMode: SupportedMode) {
+    this.supportedMode = supportedMode;
     const hardware = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
     const workerCount = Math.max(1, Math.min(8, Math.max(1, hardware - 1)));
     this.slots = Array.from({ length: workerCount }, (_, index) => ({
@@ -75,6 +92,8 @@ class ModeWorkerPool {
       busy: false,
       currentRequestId: null,
       currentOffsetId: null,
+      currentOffset: null,
+      currentProgressPct: 0,
     }));
 
     this.ready = Promise.all(this.slots.map(slot => new Promise<WorkerReadyStatus>((resolve, reject) => {
@@ -99,32 +118,43 @@ class ModeWorkerPool {
       slot.worker.postMessage({
         type: 'init',
         fontBitsByCharset,
+        enabledModes: [supportedMode],
+        disableWasm: workerAccelerationMode === 'js',
       } satisfies ConverterWorkerRequestMessage);
     }))).then(workerStatuses => {
+      const allWorkersSupportWasm = workerStatuses.every(status => status.wasmByMode[supportedMode]);
       this.backendByMode = {
-        ecm: workerStatuses.every(status => status.wasmByMode.ecm) ? 'wasm' : 'js',
-        mcm: workerStatuses.every(status => status.wasmByMode.mcm) ? 'wasm' : 'js',
+        ecm: supportedMode === 'ecm'
+          ? workerAccelerationMode === 'js'
+            ? 'js'
+            : allWorkersSupportWasm ? 'wasm' : 'js'
+          : 'js',
+        mcm: supportedMode === 'mcm'
+          ? workerAccelerationMode === 'js'
+            ? 'js'
+            : allWorkersSupportWasm ? 'wasm' : 'js'
+          : 'js',
       };
-      (['ecm', 'mcm'] as const).forEach(mode => {
-        if (this.backendByMode[mode] === 'wasm') {
-          console.info(`[TruSkii3000] ${mode.toUpperCase()} worker pool ready with WASM in all workers.`, {
-            workerCount: workerStatuses.length,
-            workers: workerStatuses.map(status => ({
-              workerId: status.workerId,
-              backend: 'wasm',
-            })),
-          });
-        } else {
-          console.warn(`[TruSkii3000] ${mode.toUpperCase()} worker pool using JS fallback.`, {
-            workerCount: workerStatuses.length,
-            workers: workerStatuses.map(status => ({
-              workerId: status.workerId,
-              backend: status.wasmByMode[mode] ? 'wasm' : 'js',
-              wasmError: status.wasmErrors?.[mode],
-            })),
-          });
-        }
-      });
+      if (this.backendByMode[supportedMode] === 'wasm') {
+        console.info(`[TruSkii3000] ${supportedMode.toUpperCase()} worker pool ready with WASM in all workers.`, {
+          workerCount: workerStatuses.length,
+          requestedMode: workerAccelerationMode,
+          workers: workerStatuses.map(status => ({
+            workerId: status.workerId,
+            backend: 'wasm',
+          })),
+        });
+      } else {
+        console.info(`[TruSkii3000] ${supportedMode.toUpperCase()} worker pool using JS path.`, {
+          workerCount: workerStatuses.length,
+          requestedMode: workerAccelerationMode,
+          workers: workerStatuses.map(status => ({
+            workerId: status.workerId,
+            backend: status.wasmByMode[supportedMode] ? 'wasm' : 'js',
+            wasmError: status.wasmErrors?.[supportedMode],
+          })),
+        });
+      }
       this.slots.forEach(slot => {
         slot.worker.onmessage = event => this.handleWorkerMessage(slot, event.data as ConverterWorkerResponseMessage);
         slot.worker.onerror = event => this.handleWorkerError(slot, event);
@@ -141,6 +171,9 @@ class ModeWorkerPool {
     shouldCancel?: () => boolean
   ): Promise<WorkerSolvedModeCandidate | undefined> {
     await this.ready;
+    if (mode !== this.supportedMode) {
+      throw new Error(`Worker pool configured for ${this.supportedMode.toUpperCase()}, not ${mode.toUpperCase()}.`);
+    }
 
     if (this.activeRequest) {
       this.cancelActiveRequest();
@@ -166,12 +199,13 @@ class ModeWorkerPool {
     };
     this.activeRequest = active;
     onModeBackend?.(this.backendByMode[mode]);
+    const sharedPreprocessed = shareModePreprocessedImage(preprocessed);
 
     this.slots.forEach(slot => {
       slot.worker.postMessage({
         type: 'start-request',
         requestId,
-        preprocessed,
+        preprocessed: sharedPreprocessed,
         settings,
       } satisfies ConverterWorkerRequestMessage);
     });
@@ -204,6 +238,8 @@ class ModeWorkerPool {
       slot.busy = true;
       slot.currentRequestId = active.requestId;
       slot.currentOffsetId = job.offsetId;
+      slot.currentOffset = job.offset;
+      slot.currentProgressPct = 0;
       active.inflight++;
       slot.worker.postMessage({
         type: 'solve-offset',
@@ -233,6 +269,7 @@ class ModeWorkerPool {
       const solved: WorkerSolvedModeCandidate = {
         conversion: message.conversion,
         error: message.error,
+        offset: slot.currentOffset ?? { x: 0, y: 0 },
       };
       if (!active.best || solved.error < active.best.error) {
         active.best = solved;
@@ -240,10 +277,26 @@ class ModeWorkerPool {
       active.onProgress(
         'Alignment',
         `${active.mode.toUpperCase()} ${active.completed} of ${active.total}`,
-        Math.round((active.completed / Math.max(1, active.total)) * 100)
+        Number(((active.completed / Math.max(1, active.total)) * 100).toFixed(1))
       );
       this.fillIdleWorkers();
       this.maybeFinish();
+      return;
+    }
+
+    if (message.type === 'progress') {
+      if (message.mode !== active.mode) {
+        return;
+      }
+      if (slot.currentOffsetId !== message.offsetId) {
+        return;
+      }
+      slot.currentProgressPct = Math.max(0, Math.min(100, Number(message.pct)));
+      active.onProgress(
+        message.stage,
+        this.formatProgressDetail(active, slot, message.offsetId, message.detail),
+        this.computeOverallPct(active)
+      );
       return;
     }
 
@@ -344,20 +397,44 @@ class ModeWorkerPool {
     slot.busy = false;
     slot.currentRequestId = null;
     slot.currentOffsetId = null;
+    slot.currentOffset = null;
+    slot.currentProgressPct = 0;
+  }
+
+  private computeOverallPct(active: ActiveRequest): number {
+    const inFlightPct = this.slots.reduce((sum, slot) => {
+      if (slot.currentRequestId !== active.requestId) {
+        return sum;
+      }
+      return sum + slot.currentProgressPct;
+    }, 0);
+    return Number((((active.completed * 100) + inFlightPct) / Math.max(1, active.total)).toFixed(1));
+  }
+
+  private formatProgressDetail(
+    active: ActiveRequest,
+    slot: WorkerSlot,
+    offsetId: number,
+    detail: string
+  ): string {
+    const offsetLabel = slot.currentOffset
+      ? `offset ${offsetId + 1}/${active.total} (${slot.currentOffset.x},${slot.currentOffset.y})`
+      : `offset ${offsetId + 1}/${active.total}`;
+    return detail ? `${active.mode.toUpperCase()} ${offsetLabel} - ${detail}` : `${active.mode.toUpperCase()} ${offsetLabel}`;
   }
 }
 
-let poolPromise: Promise<ModeWorkerPool> | null = null;
+const poolPromises: Partial<Record<SupportedMode, Promise<ModeWorkerPool>>> = {};
 
 function supportsWorkerAcceleration(): boolean {
   return typeof Worker !== 'undefined';
 }
 
-async function getPool(fontBitsByCharset: ConverterFontBits): Promise<ModeWorkerPool> {
-  if (!poolPromise) {
-    poolPromise = Promise.resolve(new ModeWorkerPool(fontBitsByCharset));
+async function getPool(mode: SupportedMode, fontBitsByCharset: ConverterFontBits): Promise<ModeWorkerPool> {
+  if (!poolPromises[mode]) {
+    poolPromises[mode] = Promise.resolve(new ModeWorkerPool(fontBitsByCharset, mode));
   }
-  return await poolPromise;
+  return await poolPromises[mode]!;
 }
 
 export async function runModeConversionInWorkers(
@@ -372,12 +449,17 @@ export async function runModeConversionInWorkers(
   if (!supportsWorkerAcceleration()) {
     throw new Error(`${mode.toUpperCase()} worker acceleration is not supported.`);
   }
-  const pool = await getPool(fontBitsByCharset);
+  const pool = await getPool(mode, fontBitsByCharset);
   return await pool.run(mode, preprocessed, settings, onProgress, onModeBackend, shouldCancel);
 }
 
 export function disposeModeConverterWorkers() {
-  if (!poolPromise) return;
-  void poolPromise.then(pool => pool.dispose()).catch(() => {});
-  poolPromise = null;
+  (Object.keys(poolPromises) as SupportedMode[]).forEach(mode => {
+    const poolPromise = poolPromises[mode];
+    if (!poolPromise) {
+      return;
+    }
+    void poolPromise.then(pool => pool.dispose()).catch(() => {});
+    delete poolPromises[mode];
+  });
 }

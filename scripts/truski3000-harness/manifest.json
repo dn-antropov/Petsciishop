@@ -1,0 +1,16 @@
+{
+  "scenarios": [
+    {
+      "fixture": "doggy.png",
+      "modes": ["standard", "ecm"]
+    },
+    {
+      "fixture": "house-a.png",
+      "modes": ["standard", "ecm"]
+    },
+    {
+      "fixture": "slayer_multi_color.png",
+      "modes": ["standard", "mcm"]
+    }
+  ]
+}

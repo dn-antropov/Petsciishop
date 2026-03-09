@@ -2,12 +2,13 @@
 import React from 'react';
 import { connect } from 'react-redux';
 import { bindActionCreators, Dispatch } from 'redux';
-import { CrtFilter, RootState } from '../redux/types';
+import { RootState } from '../redux/types';
 import { Toolbar } from '../redux/toolbar';
 import * as selectors from '../redux/selectors';
 import * as screensSelectors from '../redux/screensSelectors';
-import { getEffectiveColorPalette, getSettingsCrtFilter } from '../redux/settingsSelectors';
+import { getEffectiveColorPalette } from '../redux/settingsSelectors';
 import { openBezelPreview } from '../utils/bezelPreview';
+import MonitorIcon from '../assets/C1702_monitor_icon.svg?url';
 import s from './CanvasToolPanel.module.css';
 
 interface Props {
@@ -34,8 +35,9 @@ function CanvasToolPanel({ canvasGridBrightness, setCanvasGridBrightness, onBeze
         />
         <span className={s.brightnessValue}>{sliderValue}</span>
       </label>
-      <button className={s.previewBtn} onClick={onBezelPreview}>
-        Preview
+      <button className={s.previewBtn} onClick={onBezelPreview} title="Preview on C1702 monitor">
+        <img src={MonitorIcon} alt="" className={s.previewIcon} />
+        <span>Preview</span>
       </button>
     </>
   );
@@ -55,8 +57,7 @@ export default connect(
       if (!fb) return;
       const { font } = selectors.getCurrentFramebufFont(state);
       const palette = getEffectiveColorPalette(state, screensSelectors.getCurrentScreenFramebufIndex(state));
-      const crtFilter: CrtFilter = getSettingsCrtFilter(state);
-      openBezelPreview({ ...fb, font }, palette, crtFilter);
+      openBezelPreview({ ...fb, font }, palette);
     }),
   })
 )(CanvasToolPanel);

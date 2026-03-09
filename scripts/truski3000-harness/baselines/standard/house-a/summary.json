@@ -1,0 +1,14 @@
+{
+  "mode": "standard",
+  "charset": "upper",
+  "backgroundColor": 15,
+  "ecmBgColors": [],
+  "qualityMeanDeltaE": 0.13625235258355056,
+  "qualityPerCellHash": "1065f8d7f825055541023ff203ac1513728e1ef117536af13fe8b71c7c4391d5",
+  "cellMetadataHash": "fa56318f0b99304ca4f57dfe3aa014ec3813e6fd2fc08ac93a0a3c52a9738ebc",
+  "bgIndicesHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "mcmSharedColors": [],
+  "colorsHash": "d4502c61356fcb60394fa8975a3c028fa25bc9a6a0d6ee2b9e5ed7a5b0d783b6",
+  "screencodesHash": "a33b96c84c7ca16676761ba449b697e733dc246b4964a8cca67e594b44a4e326",
+  "previewHash": "1bc1f0aab7fb84d99b84d78bbd778736de7bc3909b519e6b4447abd640448d71"
+}

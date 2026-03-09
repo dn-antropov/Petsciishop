@@ -143,6 +143,21 @@
   padding: 2px 4px;
 }
 
+.settingsRow .inlineCheckbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+  text-align: left;
+  font-size: 12px;
+  color: #cfcfcf;
+  cursor: pointer;
+}
+
+.settingsRow .inlineCheckbox input {
+  margin: 0;
+}
+
 .value {
   width: 36px;
   text-align: right;
@@ -380,7 +395,7 @@
 
 .previewBackendBadge {
   display: inline-block;
-  margin-top: 6px;
+  margin-top: 0;
   padding: 2px 8px;
   border: 1px solid rgba(158, 200, 175, 0.45);
   border-radius: 999px;
@@ -409,6 +424,7 @@
   position: relative;
   width: 100%;
   max-width: 320px;
+  aspect-ratio: 4 / 3;
   margin: 0 auto;
   overflow: hidden;
 }
@@ -421,6 +437,8 @@
 .previewCanvas {
   display: block;
   width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
   max-width: 320px;
   margin: 0 auto;
   box-sizing: border-box;
@@ -436,7 +454,7 @@
   justify-content: center;
   width: 100%;
   max-width: 320px;
-  aspect-ratio: 320 / 200;
+  aspect-ratio: 4 / 3;
   margin: 0 auto;
   padding: 16px;
   box-sizing: border-box;
@@ -458,22 +476,28 @@
 
 .previewPlaceholderInner {
   width: 100%;
-  max-width: 220px;
+  max-width: 260px;
   text-align: center;
+  display: grid;
+  grid-template-rows: auto calc(1.35em * 3) 8px auto auto;
+  row-gap: 10px;
+  align-items: center;
 }
 
 .previewPlaceholderLabel {
   font-size: 13px;
   color: #ddd;
-  margin-bottom: 6px;
+  margin-bottom: 0;
 }
 
 .previewPlaceholderDetail {
   font-size: 11px;
   line-height: 1.35;
   color: #999;
-  min-height: 30px;
-  margin-bottom: 10px;
+  height: calc(1.35em * 3);
+  margin-bottom: 0;
+  overflow: hidden;
+  text-wrap: balance;
 }
 
 .previewTimingLive {
@@ -481,7 +505,7 @@
   line-height: 1.25;
   color: #d8f0df;
   font-weight: 600;
-  margin-top: 10px;
+  margin-top: 0;
 }
 
 .previewPlaceholderBar {

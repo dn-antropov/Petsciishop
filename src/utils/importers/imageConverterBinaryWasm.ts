@@ -3,15 +3,23 @@ import wasmUrl from './truskiiBinaryKernel.wasm?url';
 type BinaryKernelContext = {
   flatPositions: Uint8Array;
   positionOffsets: Int32Array;
+  packedBinaryGlyphLo: Uint32Array;
+  packedBinaryGlyphHi: Uint32Array;
 };
 
 type BinaryKernelExports = {
   memory: WebAssembly.Memory;
   getWeightedPixelErrorsPtr(): number;
+  getPairDiffPtr(): number;
+  getThresholdBitsPtr(): number;
   getPositionOffsetsPtr(): number;
   getFlatPositionsPtr(): number;
+  getPackedBinaryGlyphLoPtr(): number;
+  getPackedBinaryGlyphHiPtr(): number;
   getOutputSetErrsPtr(): number;
+  getOutputHammingPtr(): number;
   computeSetErrs(): void;
+  computeHammingDistances(): void;
 };
 
 type BinaryKernelImports = WebAssembly.Imports & {
@@ -22,6 +30,12 @@ type BinaryKernelImports = WebAssembly.Imports & {
 
 export interface StandardCandidateScoringKernel {
   computeSetErrs(weightedPixelErrors: Float32Array, context: BinaryKernelContext): Float32Array;
+  computeHammingDistances(
+    thresholdLo: number,
+    thresholdHi: number,
+    pairDiff: Float64Array,
+    context: BinaryKernelContext
+  ): Uint8Array;
 }
 
 export interface BinaryWasmKernelCreateResult {
@@ -67,10 +81,16 @@ function compileModule(): Promise<WebAssembly.Module> {
 export class BinaryWasmKernel implements StandardCandidateScoringKernel {
   private readonly exports: BinaryKernelExports;
   private loadedContext: BinaryKernelContext | null = null;
+  private loadedPairDiff: Float64Array | null = null;
   private weightedPixelErrorsView: Float32Array;
+  private pairDiffView: Float32Array;
+  private thresholdBitsView: Uint32Array;
   private positionOffsetsView: Int32Array;
   private flatPositionsView: Uint8Array;
+  private packedBinaryGlyphLoView: Uint32Array;
+  private packedBinaryGlyphHiView: Uint32Array;
   private outputSetErrsView: Float32Array;
+  private outputHammingView: Uint8Array;
 
   private constructor(exports: BinaryKernelExports) {
     this.exports = exports;
@@ -78,6 +98,16 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
       exports.memory.buffer,
       exports.getWeightedPixelErrorsPtr(),
       64 * 16
+    );
+    this.pairDiffView = new Float32Array(
+      exports.memory.buffer,
+      exports.getPairDiffPtr(),
+      16 * 16
+    );
+    this.thresholdBitsView = new Uint32Array(
+      exports.memory.buffer,
+      exports.getThresholdBitsPtr(),
+      2
     );
     this.positionOffsetsView = new Int32Array(
       exports.memory.buffer,
@@ -89,10 +119,25 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
       exports.getFlatPositionsPtr(),
       256 * 64
     );
+    this.packedBinaryGlyphLoView = new Uint32Array(
+      exports.memory.buffer,
+      exports.getPackedBinaryGlyphLoPtr(),
+      256
+    );
+    this.packedBinaryGlyphHiView = new Uint32Array(
+      exports.memory.buffer,
+      exports.getPackedBinaryGlyphHiPtr(),
+      256
+    );
     this.outputSetErrsView = new Float32Array(
       exports.memory.buffer,
       exports.getOutputSetErrsPtr(),
       256 * 16
+    );
+    this.outputHammingView = new Uint8Array(
+      exports.memory.buffer,
+      exports.getOutputHammingPtr(),
+      256
     );
   }
 
@@ -116,14 +161,38 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
     return this.outputSetErrsView;
   }
 
+  computeHammingDistances(
+    thresholdLo: number,
+    thresholdHi: number,
+    pairDiff: Float64Array,
+    context: BinaryKernelContext
+  ): Uint8Array {
+    this.ensureContext(context);
+    this.ensurePairDiff(pairDiff);
+    this.thresholdBitsView[0] = thresholdLo >>> 0;
+    this.thresholdBitsView[1] = thresholdHi >>> 0;
+    this.exports.computeHammingDistances();
+    return this.outputHammingView;
+  }
+
   private ensureContext(context: BinaryKernelContext) {
     if (this.loadedContext === context) {
       return;
     }
 
     this.positionOffsetsView.set(context.positionOffsets);
-    this.flatPositionsView.fill(0);
     this.flatPositionsView.set(context.flatPositions);
+    this.packedBinaryGlyphLoView.set(context.packedBinaryGlyphLo);
+    this.packedBinaryGlyphHiView.set(context.packedBinaryGlyphHi);
     this.loadedContext = context;
+  }
+
+  private ensurePairDiff(pairDiff: Float64Array) {
+    if (this.loadedPairDiff === pairDiff) {
+      return;
+    }
+
+    this.pairDiffView.set(pairDiff);
+    this.loadedPairDiff = pairDiff;
   }
 }

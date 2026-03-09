@@ -6,6 +6,20 @@ import type {
   ConversionResult,
   StandardAccelerationPath,
 } from './imageConverter';
+import {
+  computeCsfPenalty,
+  computeDirectionalAlignmentBonus,
+  computeHuePreservationBonus,
+  hasMinimumContrast,
+  isTypographicScreencode,
+} from './imageConverterHeuristics';
+import {
+  computeBinaryHammingDistancesJs,
+  packBinaryGlyphBitplanes,
+  packBinaryThresholdMap,
+} from './imageConverterBitPacking';
+import { computeCellStructureMetrics, type CellGradientDirection } from './imageConverterCellMetrics';
+import { buildGlyphAtlasMetadata, type GlyphAtlasMetadata } from './glyphAtlas';
 
 const CANVAS_WIDTH = 320;
 const CANVAS_HEIGHT = 200;
@@ -14,16 +28,26 @@ const GRID_HEIGHT = 25;
 const CELL_COUNT = GRID_WIDTH * GRID_HEIGHT;
 const PIXELS_PER_CELL = 64;
 const ALIGNMENT_VALUES = [-2, -1, 0, 1, 2];
-const STANDARD_SAMPLE_COUNT = 96;
-const STANDARD_FINALIST_COUNT = 4;
-const STANDARD_POOL_SIZE = 6;
-const SCREEN_SOLVE_PASSES = 5;
+// Quality-first Standard search budgets: keep more finalists and cell-level
+// alternatives so the solver can spend extra time improving the final match.
+const STANDARD_SAMPLE_COUNT = 160;
+const STANDARD_FINALIST_COUNT = 8;
+const STANDARD_POOL_SIZE = 10;
+const SCREEN_SOLVE_PASSES = 7;
 const LUMA_ERROR_WEIGHT = 1.55;
 const CHROMA_ERROR_WEIGHT = 0.85;
 const REPEAT_PENALTY = 28.0;
 const CONTINUITY_PENALTY = 0.14;
 const MODE_SWITCH_PENALTY = 10.0;
 const MODE_SWITCH_DIFF_THRESHOLD = 3.5;
+const BRIGHTNESS_DEBT_WEIGHT = 64.0;
+const BRIGHTNESS_DEBT_DECAY = 0.6;
+const BRIGHTNESS_DEBT_CLAMP = 0.18;
+const COLOR_COHERENCE_MAX_DELTA = 18.0;
+const COLOR_COHERENCE_PASSES = 3;
+const EDGE_CONTINUITY_MAX_DELTA = 12.0;
+const EDGE_CONTINUITY_PASSES = 3;
+const ENABLE_EXPERIMENTAL_HAMMING_FAST_PATH = false;
 
 export interface AlignmentOffset {
   x: number;
@@ -44,6 +68,9 @@ export interface PaletteMetricData {
   pA: Float64Array;
   pB: Float64Array;
   pairDiff: Float64Array;
+  binaryMixL: Float64Array;
+  binaryMixA: Float64Array;
+  binaryMixB: Float64Array;
   maxPairDiff: number;
 }
 
@@ -53,10 +80,19 @@ export interface CharsetConversionContext {
   setPositions: Uint8Array[];
   flatPositions: Uint8Array;
   positionOffsets: Int32Array;
+  packedBinaryGlyphLo: Uint32Array;
+  packedBinaryGlyphHi: Uint32Array;
+  glyphAtlas: GlyphAtlasMetadata;
 }
 
 export interface StandardCandidateScoringKernel {
   computeSetErrs(weightedPixelErrors: Float32Array, context: CharsetConversionContext): Float32Array;
+  computeHammingDistances?(
+    thresholdLo: number,
+    thresholdHi: number,
+    pairDiff: Float64Array,
+    context: CharsetConversionContext
+  ): Uint8Array;
 }
 
 export interface StandardPreprocessedImage {
@@ -74,10 +110,17 @@ interface SourceCellData {
   weightedPixelErrors: Float32Array;
   totalErrByColor: Float32Array;
   avgL: number;
+  avgA: number;
+  avgB: number;
+  saliencyWeight: number;
+  detailScore: number;
+  gradientDirection: CellGradientDirection;
 }
 
 interface SourceAnalysis {
   cells: SourceCellData[];
+  detailScores: Float32Array;
+  gradientDirections: Uint8Array;
   rankedIndices: Int32Array;
   hBoundaryDiffs: Float32Array;
   hBoundaryMeans: Float32Array;
@@ -90,6 +133,9 @@ interface ScreenCandidate {
   fg: number;
   bg: number;
   baseError: number;
+  brightnessResidual: number;
+  coherenceColorMask: number;
+  glyphDirection: CellGradientDirection;
   edgeLeft: Uint8Array;
   edgeRight: Uint8Array;
   edgeTop: Uint8Array;
@@ -105,10 +151,17 @@ interface PetsciiResult {
   totalError: number;
 }
 
+type BinaryCellScoringTables = {
+  pairAdjustment: Float64Array;
+  brightnessResidual: Float32Array;
+  csfPenaltyByChar: Float32Array;
+};
+
 export interface StandardSolvedModeCandidate {
   conversion: ConversionResult;
   error: number;
   executionPath?: StandardAccelerationPath;
+  offset: AlignmentOffset;
 }
 
 export type ProgressCallback = (stage: string, detail: string, pct: number) => void;
@@ -172,6 +225,9 @@ export function buildPaletteMetricData(palette: PaletteColor[]): PaletteMetricDa
   const pA = new Float64Array(16);
   const pB = new Float64Array(16);
   const pairDiff = new Float64Array(16 * 16);
+  const binaryMixL = new Float64Array(65 * 16 * 16);
+  const binaryMixA = new Float64Array(65 * 16 * 16);
+  const binaryMixB = new Float64Array(65 * 16 * 16);
   let maxPairDiff = 0;
 
   for (let i = 0; i < 16; i++) {
@@ -185,10 +241,27 @@ export function buildPaletteMetricData(palette: PaletteColor[]): PaletteMetricDa
       const diff = perceptualError(pL[a], pA[a], pB[a], pL[b], pA[b], pB[b]);
       pairDiff[a * 16 + b] = diff;
       if (diff > maxPairDiff) maxPairDiff = diff;
+
+      for (let setCount = 0; setCount <= PIXELS_PER_CELL; setCount++) {
+        const mixIndex = (setCount * 16 + b) * 16 + a;
+        const bgWeight = PIXELS_PER_CELL - setCount;
+        binaryMixL[mixIndex] = (setCount * pL[a] + bgWeight * pL[b]) / PIXELS_PER_CELL;
+        binaryMixA[mixIndex] = (setCount * pA[a] + bgWeight * pA[b]) / PIXELS_PER_CELL;
+        binaryMixB[mixIndex] = (setCount * pB[a] + bgWeight * pB[b]) / PIXELS_PER_CELL;
+      }
     }
   }
 
-  return { pL, pA, pB, pairDiff, maxPairDiff: Math.max(maxPairDiff, 1) };
+  return {
+    pL,
+    pA,
+    pB,
+    pairDiff,
+    binaryMixL,
+    binaryMixA,
+    binaryMixB,
+    maxPairDiff: Math.max(maxPairDiff, 1),
+  };
 }
 
 export function buildCharsetConversionContext(fontBits: number[]): CharsetConversionContext {
@@ -219,12 +292,16 @@ export function buildCharsetConversionContext(fontBits: number[]): CharsetConver
   positionOffsets[256] = allPositions.length;
 
   const refSetCount = new Int32Array(setPositions.map(positions => positions.length));
+  const { packedBinaryGlyphLo, packedBinaryGlyphHi } = packBinaryGlyphBitplanes(ref);
   return {
     ref,
     refSetCount,
     setPositions,
     flatPositions: Uint8Array.from(allPositions),
     positionOffsets,
+    packedBinaryGlyphLo,
+    packedBinaryGlyphHi,
+    glyphAtlas: buildGlyphAtlasMetadata(ref),
   };
 }
 
@@ -303,6 +380,7 @@ export function analyzeAlignedSourceImage(
     }
   }
 
+  const structureMetrics = computeCellStructureMetrics(srcL);
   const hBoundaryDiffs = new Float32Array(GRID_HEIGHT * (GRID_WIDTH - 1) * 8);
   const hBoundaryMeans = new Float32Array(GRID_HEIGHT * (GRID_WIDTH - 1));
   for (let cy = 0; cy < GRID_HEIGHT; cy++) {
@@ -400,8 +478,10 @@ export function analyzeAlignedSourceImage(
 
       const weightedPixelErrors = new Float32Array(PIXELS_PER_CELL * 16);
       const totalErrByColor = new Float32Array(16);
+      let saliencyTotal = 0;
       for (let p = 0; p < PIXELS_PER_CELL; p++) {
         const pixelIndex = pixelIndices[p];
+        saliencyTotal += weights[p];
         const base = p * 16;
         for (let c = 0; c < 16; c++) {
           const err = weights[p] * perceptualError(
@@ -417,6 +497,11 @@ export function analyzeAlignedSourceImage(
         weightedPixelErrors,
         totalErrByColor,
         avgL: meanL,
+        avgA: meanA,
+        avgB: meanB,
+        saliencyWeight: saliencyTotal / PIXELS_PER_CELL,
+        detailScore: structureMetrics.detailScores[cellIndex],
+        gradientDirection: structureMetrics.gradientDirections[cellIndex] as CellGradientDirection,
       };
     }
   }
@@ -426,6 +511,8 @@ export function analyzeAlignedSourceImage(
 
   return {
     cells,
+    detailScores: structureMetrics.detailScores,
+    gradientDirections: structureMetrics.gradientDirections,
     rankedIndices: Int32Array.from(order),
     hBoundaryDiffs,
     hBoundaryMeans,
@@ -502,6 +589,21 @@ function buildBinaryEdges(mask: Uint8Array, bg: number, fg: number) {
   return { edgeLeft, edgeRight, edgeTop, edgeBottom };
 }
 
+function buildBinaryCoherenceColorMask(mask: Uint8Array, bg: number, fg: number): number {
+  let hasBg = false;
+  let hasFg = false;
+  for (let i = 0; i < mask.length; i++) {
+    if (mask[i]) hasFg = true;
+    else hasBg = true;
+    if (hasBg && hasFg) break;
+  }
+
+  let coherenceColorMask = 0;
+  if (hasBg) coherenceColorMask |= 1 << bg;
+  if (hasFg) coherenceColorMask |= 1 << fg;
+  return coherenceColorMask;
+}
+
 function computeSelfTileScale(
   first: Uint8Array,
   second: Uint8Array,
@@ -520,16 +622,22 @@ function makeBinaryCandidate(
   char: number,
   bg: number,
   fg: number,
+  glyphDirection: CellGradientDirection,
   baseError: number,
+  brightnessResidual: number,
   pairDiff: Float64Array,
   maxPairDiff: number
 ): ScreenCandidate {
   const edges = buildBinaryEdges(mask, bg, fg);
+  const coherenceColorMask = buildBinaryCoherenceColorMask(mask, bg, fg);
   return {
     char,
     fg,
     bg,
     baseError,
+    brightnessResidual,
+    coherenceColorMask,
+    glyphDirection,
     ...edges,
     repeatH: computeSelfTileScale(edges.edgeRight, edges.edgeLeft, pairDiff, maxPairDiff),
     repeatV: computeSelfTileScale(edges.edgeBottom, edges.edgeTop, pairDiff, maxPairDiff),
@@ -539,6 +647,12 @@ function makeBinaryCandidate(
 // --- Reusable setErr buffer (safe: callers use result synchronously before next call) ---
 
 const _reusableSetErrs = new Float32Array(256 * 16);
+const _reusableBinaryHamming = new Uint8Array(256);
+const _reusableBinaryPairAdjustment = new Float64Array((PIXELS_PER_CELL + 1) * 16 * 16);
+const _reusableBinaryBrightnessResidual = new Float32Array((PIXELS_PER_CELL + 1) * 16 * 16);
+const _reusableBinaryCsfPenalty = new Float32Array(256);
+const _candidateScreencodeCache = new Map<string, Uint16Array>();
+const _foregroundCandidateCache = new WeakMap<PaletteMetricData, Map<number, Uint8Array[]>>();
 
 function computeSetErrMatrixJs(
   weightedPixelErrors: Float32Array,
@@ -572,6 +686,127 @@ function computeSetErrMatrix(
     : computeSetErrMatrixJs(cell.weightedPixelErrors, context);
 }
 
+function binaryMixIndex(setCount: number, bg: number, fg: number): number {
+  return (setCount * 16 + bg) * 16 + fg;
+}
+
+function getCandidateScreencodes(includeTypographic: boolean): Uint16Array {
+  const cacheKey = includeTypographic ? 'all' : 'filtered';
+  const cached = _candidateScreencodeCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const screencodes: number[] = [];
+  for (let ch = 0; ch < 256; ch++) {
+    if (!includeTypographic && isTypographicScreencode(ch)) continue;
+    screencodes.push(ch);
+  }
+
+  const built = Uint16Array.from(screencodes);
+  _candidateScreencodeCache.set(cacheKey, built);
+  return built;
+}
+
+function getForegroundCandidatesByBackground(
+  metrics: PaletteMetricData
+): Uint8Array[] {
+  const cachedByLimit = _foregroundCandidateCache.get(metrics);
+  if (cachedByLimit?.has(16)) {
+    return cachedByLimit.get(16)!;
+  }
+
+  const foregroundsByBackground = Array.from({ length: 16 }, (_, bg) => {
+    const foregrounds: number[] = [];
+    for (let fg = 0; fg < 16; fg++) {
+      if (fg === bg) continue;
+      if (!hasMinimumContrast(metrics, fg, bg)) continue;
+      foregrounds.push(fg);
+    }
+    return Uint8Array.from(foregrounds);
+  });
+
+  const nextByLimit = cachedByLimit ?? new Map<number, Uint8Array[]>();
+  nextByLimit.set(16, foregroundsByBackground);
+  if (!cachedByLimit) {
+    _foregroundCandidateCache.set(metrics, nextByLimit);
+  }
+  return foregroundsByBackground;
+}
+
+function buildBinaryCellScoringTables(
+  cell: SourceCellData,
+  context: CharsetConversionContext,
+  metrics: PaletteMetricData,
+  settings: ConverterSettings
+): BinaryCellScoringTables {
+  for (let ch = 0; ch < 256; ch++) {
+    _reusableBinaryCsfPenalty[ch] = computeCsfPenalty(
+      cell.detailScore,
+      context.glyphAtlas.spatialFrequency[ch],
+      settings.csfWeight
+    );
+  }
+
+  for (let setCount = 0; setCount <= PIXELS_PER_CELL; setCount++) {
+    for (let bg = 0; bg < 16; bg++) {
+      for (let fg = 0; fg < 16; fg++) {
+        const index = binaryMixIndex(setCount, bg, fg);
+        const lumDiff = cell.avgL - metrics.binaryMixL[index];
+        _reusableBinaryBrightnessResidual[index] = lumDiff;
+        _reusableBinaryPairAdjustment[index] =
+          settings.lumMatchWeight * lumDiff * lumDiff -
+          computeHuePreservationBonus(
+            cell.avgA,
+            cell.avgB,
+            metrics.binaryMixA[index],
+            metrics.binaryMixB[index]
+          );
+      }
+    }
+  }
+
+  return {
+    pairAdjustment: _reusableBinaryPairAdjustment,
+    brightnessResidual: _reusableBinaryBrightnessResidual,
+    csfPenaltyByChar: _reusableBinaryCsfPenalty,
+  };
+}
+
+function canUseBinaryHammingPath(
+  settings: ConverterSettings,
+  scoringKernel?: StandardCandidateScoringKernel
+): boolean {
+  return Boolean(
+    ENABLE_EXPERIMENTAL_HAMMING_FAST_PATH &&
+    scoringKernel?.computeHammingDistances &&
+    settings.saliencyAlpha === 0 &&
+    settings.csfWeight === 0 &&
+    settings.lumMatchWeight === 0
+  );
+}
+
+function computeBinaryHammingDistances(
+  cell: SourceCellData,
+  fg: number,
+  bg: number,
+  context: CharsetConversionContext,
+  metrics: PaletteMetricData,
+  scoringKernel?: StandardCandidateScoringKernel
+): Uint8Array {
+  const [thresholdLo, thresholdHi] = packBinaryThresholdMap(cell.weightedPixelErrors, fg, bg);
+  if (scoringKernel?.computeHammingDistances) {
+    return scoringKernel.computeHammingDistances(thresholdLo, thresholdHi, metrics.pairDiff, context);
+  }
+  return computeBinaryHammingDistancesJs(
+    thresholdLo,
+    thresholdHi,
+    context.packedBinaryGlyphLo,
+    context.packedBinaryGlyphHi,
+    _reusableBinaryHamming
+  );
+}
+
 function buildBinaryBestErrorByBackground(
   cell: SourceCellData,
   context: CharsetConversionContext,
@@ -581,19 +816,46 @@ function buildBinaryBestErrorByBackground(
 ): Float64Array {
   const best = new Float64Array(16);
   best.fill(Infinity);
+  const candidateScreencodes = getCandidateScreencodes(settings.includeTypographic);
+  const foregroundsByBackground = getForegroundCandidatesByBackground(metrics);
+  const scoringTables = buildBinaryCellScoringTables(cell, context, metrics, settings);
+
+  if (canUseBinaryHammingPath(settings, scoringKernel)) {
+    for (let bg = 0; bg < 16; bg++) {
+      const foregrounds = foregroundsByBackground[bg];
+      for (let fgIndex = 0; fgIndex < foregrounds.length; fgIndex++) {
+        const fg = foregrounds[fgIndex];
+        const hammingDistances = computeBinaryHammingDistances(cell, fg, bg, context, metrics, scoringKernel);
+        for (let charIndex = 0; charIndex < candidateScreencodes.length; charIndex++) {
+          const ch = candidateScreencodes[charIndex];
+          const mixIndex = binaryMixIndex(context.refSetCount[ch], bg, fg);
+          const total = hammingDistances[ch] + scoringTables.pairAdjustment[mixIndex];
+          if (total < best[bg]) best[bg] = total;
+        }
+      }
+    }
+    return best;
+  }
+
   const setErrMatrix = computeSetErrMatrix(cell, context, scoringKernel);
 
-  for (let ch = 0; ch < 256; ch++) {
+  for (let charIndex = 0; charIndex < candidateScreencodes.length; charIndex++) {
+    const ch = candidateScreencodes[charIndex];
     const rowBase = ch * 16;
     const nSet = context.refSetCount[ch];
+    const csfPenalty = scoringTables.csfPenaltyByChar[ch];
     for (let bg = 0; bg < 16; bg++) {
       const bgErr = cell.totalErrByColor[bg] - setErrMatrix[rowBase + bg];
       if (bgErr >= best[bg]) continue;
-      for (let fg = 0; fg < 16; fg++) {
-        if (fg === bg) continue;
-        const renderedAvgL = (nSet * metrics.pL[fg] + (PIXELS_PER_CELL - nSet) * metrics.pL[bg]) / PIXELS_PER_CELL;
-        const lumDiff = cell.avgL - renderedAvgL;
-        const total = bgErr + setErrMatrix[rowBase + fg] + settings.lumMatchWeight * lumDiff * lumDiff;
+      const foregrounds = foregroundsByBackground[bg];
+      for (let fgIndex = 0; fgIndex < foregrounds.length; fgIndex++) {
+        const fg = foregrounds[fgIndex];
+        const mixIndex = binaryMixIndex(nSet, bg, fg);
+        const total =
+          bgErr +
+          setErrMatrix[rowBase + fg] +
+          csfPenalty +
+          scoringTables.pairAdjustment[mixIndex];
         if (total < best[bg]) best[bg] = total;
       }
     }
@@ -612,11 +874,70 @@ function buildBinaryCandidatePoolsForCell(
   scoringKernel?: StandardCandidateScoringKernel
 ): ScreenCandidate[][] {
   const pools = backgrounds.map(() => [] as ScreenCandidate[]);
+  const candidateScreencodes = getCandidateScreencodes(settings.includeTypographic);
+  const foregroundsByBackground = getForegroundCandidatesByBackground(metrics);
+  const scoringTables = buildBinaryCellScoringTables(cell, context, metrics, settings);
+
+  if (canUseBinaryHammingPath(settings, scoringKernel)) {
+    for (let bi = 0; bi < backgrounds.length; bi++) {
+      const bg = backgrounds[bi];
+      const pool = pools[bi];
+      const foregrounds = foregroundsByBackground[bg];
+      for (let fgIndex = 0; fgIndex < foregrounds.length; fgIndex++) {
+        const fg = foregrounds[fgIndex];
+        const hammingDistances = computeBinaryHammingDistances(cell, fg, bg, context, metrics, scoringKernel);
+        for (let charIndex = 0; charIndex < candidateScreencodes.length; charIndex++) {
+          const ch = candidateScreencodes[charIndex];
+          const mixIndex = binaryMixIndex(context.refSetCount[ch], bg, fg);
+          const total = hammingDistances[ch] + scoringTables.pairAdjustment[mixIndex];
+          if (pool.length < poolSize || total < pool[pool.length - 1].baseError) {
+            insertTopCandidate(
+              pool,
+              makeBinaryCandidate(
+                context.ref[ch],
+                ch,
+                bg,
+                fg,
+                context.glyphAtlas.dominantDirection[ch] as CellGradientDirection,
+                total,
+                scoringTables.brightnessResidual[mixIndex],
+                metrics.pairDiff,
+                metrics.maxPairDiff
+              ),
+              poolSize
+            );
+          }
+        }
+      }
+    }
+
+    for (let bi = 0; bi < backgrounds.length; bi++) {
+      if (pools[bi].length > 0) continue;
+      const bg = backgrounds[bi] ?? 0;
+      const fg = bg === 0 ? 1 : 0;
+      pools[bi] = [makeBinaryCandidate(
+        context.ref[32],
+        32,
+        bg,
+        fg,
+        context.glyphAtlas.dominantDirection[32] as CellGradientDirection,
+        Infinity,
+        0,
+        metrics.pairDiff,
+        metrics.maxPairDiff
+      )];
+    }
+
+    return pools;
+  }
+
   const setErrMatrix = computeSetErrMatrix(cell, context, scoringKernel);
 
-  for (let ch = 0; ch < 256; ch++) {
+  for (let charIndex = 0; charIndex < candidateScreencodes.length; charIndex++) {
+    const ch = candidateScreencodes[charIndex];
     const rowBase = ch * 16;
     const nSet = context.refSetCount[ch];
+    const csfPenalty = scoringTables.csfPenaltyByChar[ch];
 
     for (let bi = 0; bi < backgrounds.length; bi++) {
       const bg = backgrounds[bi];
@@ -625,15 +946,29 @@ function buildBinaryCandidatePoolsForCell(
       const bgErr = cell.totalErrByColor[bg] - setErrMatrix[rowBase + bg];
       if (bgErr >= worst) continue;
 
-      for (let fg = 0; fg < 16; fg++) {
-        if (fg === bg) continue;
-        const renderedAvgL = (nSet * metrics.pL[fg] + (PIXELS_PER_CELL - nSet) * metrics.pL[bg]) / PIXELS_PER_CELL;
-        const lumDiff = cell.avgL - renderedAvgL;
-        const total = bgErr + setErrMatrix[rowBase + fg] + settings.lumMatchWeight * lumDiff * lumDiff;
+      const foregrounds = foregroundsByBackground[bg];
+      for (let fgIndex = 0; fgIndex < foregrounds.length; fgIndex++) {
+        const fg = foregrounds[fgIndex];
+        const mixIndex = binaryMixIndex(nSet, bg, fg);
+        const total =
+          bgErr +
+          setErrMatrix[rowBase + fg] +
+          csfPenalty +
+          scoringTables.pairAdjustment[mixIndex];
         if (pool.length < poolSize || total < pool[pool.length - 1].baseError) {
           insertTopCandidate(
             pool,
-            makeBinaryCandidate(context.ref[ch], ch, bg, fg, total, metrics.pairDiff, metrics.maxPairDiff),
+            makeBinaryCandidate(
+              context.ref[ch],
+              ch,
+              bg,
+              fg,
+              context.glyphAtlas.dominantDirection[ch] as CellGradientDirection,
+              total,
+              scoringTables.brightnessResidual[mixIndex],
+              metrics.pairDiff,
+              metrics.maxPairDiff
+            ),
             poolSize
           );
         }
@@ -645,7 +980,17 @@ function buildBinaryCandidatePoolsForCell(
     if (pools[bi].length > 0) continue;
     const bg = backgrounds[bi] ?? 0;
     const fg = bg === 0 ? 1 : 0;
-    pools[bi] = [makeBinaryCandidate(context.ref[32], 32, bg, fg, Infinity, metrics.pairDiff, metrics.maxPairDiff)];
+    pools[bi] = [makeBinaryCandidate(
+      context.ref[32],
+      32,
+      bg,
+      fg,
+      context.glyphAtlas.dominantDirection[32] as CellGradientDirection,
+      Infinity,
+      0,
+      metrics.pairDiff,
+      metrics.maxPairDiff
+    )];
   }
 
   return pools;
@@ -686,19 +1031,202 @@ function computeNeighborPenalty(
   return CONTINUITY_PENALTY * (edgePenalty / 8) + repeatPenalty;
 }
 
+function clampBrightnessDebt(value: number): number {
+  return Math.max(-BRIGHTNESS_DEBT_CLAMP, Math.min(BRIGHTNESS_DEBT_CLAMP, value));
+}
+
+function countMaskBits(mask: number): number {
+  let value = mask >>> 0;
+  let count = 0;
+  while (value !== 0) {
+    value &= value - 1;
+    count++;
+  }
+  return count;
+}
+
+function seedSelectionWithBrightnessDebt(
+  candidatePools: ScreenCandidate[][]
+): { selectedIndices: Int32Array; selected: ScreenCandidate[] } {
+  const selectedIndices = new Int32Array(CELL_COUNT);
+  const selected = new Array<ScreenCandidate>(CELL_COUNT);
+  const verticalDebt = new Float32Array(GRID_WIDTH);
+
+  for (let cy = 0; cy < GRID_HEIGHT; cy++) {
+    let horizontalDebt = 0;
+    for (let cx = 0; cx < GRID_WIDTH; cx++) {
+      const cellIndex = cy * GRID_WIDTH + cx;
+      const pool = candidatePools[cellIndex];
+      let bestIdx = 0;
+      let bestCost = Infinity;
+
+      for (let candidateIndex = 0; candidateIndex < pool.length; candidateIndex++) {
+        const candidate = pool[candidateIndex];
+        const debtAfter = clampBrightnessDebt(horizontalDebt + verticalDebt[cx] + candidate.brightnessResidual);
+        const cost = candidate.baseError + BRIGHTNESS_DEBT_WEIGHT * debtAfter * debtAfter;
+        if (cost < bestCost) {
+          bestCost = cost;
+          bestIdx = candidateIndex;
+        }
+      }
+
+      const chosen = pool[bestIdx];
+      selectedIndices[cellIndex] = bestIdx;
+      selected[cellIndex] = chosen;
+      horizontalDebt = clampBrightnessDebt((horizontalDebt + chosen.brightnessResidual) * BRIGHTNESS_DEBT_DECAY);
+      verticalDebt[cx] = clampBrightnessDebt((verticalDebt[cx] + chosen.brightnessResidual) * BRIGHTNESS_DEBT_DECAY);
+    }
+  }
+
+  return { selectedIndices, selected };
+}
+
+function computeCellCost(
+  cellIndex: number,
+  candidate: ScreenCandidate,
+  selected: ScreenCandidate[],
+  metrics: PaletteMetricData,
+  analysis: SourceAnalysis
+): number {
+  const cx = cellIndex % GRID_WIDTH;
+  const cy = Math.floor(cellIndex / GRID_WIDTH);
+  let cost = candidate.baseError;
+
+  if (cx > 0) {
+    cost += computeNeighborPenalty(selected[cellIndex - 1], candidate, metrics, analysis, cy, cx - 1, true);
+  }
+  if (cx < GRID_WIDTH - 1) {
+    cost += computeNeighborPenalty(candidate, selected[cellIndex + 1], metrics, analysis, cy, cx, true);
+  }
+  if (cy > 0) {
+    cost += computeNeighborPenalty(selected[cellIndex - GRID_WIDTH], candidate, metrics, analysis, cy - 1, cx, false);
+  }
+  if (cy < GRID_HEIGHT - 1) {
+    cost += computeNeighborPenalty(candidate, selected[cellIndex + GRID_WIDTH], metrics, analysis, cy, cx, false);
+  }
+
+  return cost;
+}
+
+function buildNeighborCoherenceMask(selected: ScreenCandidate[], cellIndex: number): number {
+  const cx = cellIndex % GRID_WIDTH;
+  const cy = Math.floor(cellIndex / GRID_WIDTH);
+  let mask = 0;
+
+  if (cx > 0) mask |= selected[cellIndex - 1].coherenceColorMask;
+  if (cx < GRID_WIDTH - 1) mask |= selected[cellIndex + 1].coherenceColorMask;
+  if (cy > 0) mask |= selected[cellIndex - GRID_WIDTH].coherenceColorMask;
+  if (cy < GRID_HEIGHT - 1) mask |= selected[cellIndex + GRID_WIDTH].coherenceColorMask;
+
+  return mask;
+}
+
+function runColorCoherencePass(
+  candidatePools: ScreenCandidate[][],
+  selectedIndices: Int32Array,
+  selected: ScreenCandidate[],
+  analysis: SourceAnalysis,
+  metrics: PaletteMetricData
+) {
+  for (let pass = 0; pass < COLOR_COHERENCE_PASSES; pass++) {
+    for (let cellIndex = 0; cellIndex < CELL_COUNT; cellIndex++) {
+      const neighborMask = buildNeighborCoherenceMask(selected, cellIndex);
+      if (neighborMask === 0) continue;
+
+      const current = selected[cellIndex];
+      const currentMissing = countMaskBits(current.coherenceColorMask & ~neighborMask);
+      if (currentMissing === 0) continue;
+
+      const currentCost = computeCellCost(cellIndex, current, selected, metrics, analysis);
+      let bestIdx = selectedIndices[cellIndex];
+      let bestCost = currentCost;
+      let bestMissing = currentMissing;
+
+      for (let candidateIndex = 0; candidateIndex < candidatePools[cellIndex].length; candidateIndex++) {
+        if (candidateIndex === selectedIndices[cellIndex]) continue;
+        const candidate = candidatePools[cellIndex][candidateIndex];
+        if ((candidate.coherenceColorMask & neighborMask) === 0) continue;
+
+        const candidateMissing = countMaskBits(candidate.coherenceColorMask & ~neighborMask);
+        if (candidateMissing >= bestMissing) continue;
+
+        const cost = computeCellCost(cellIndex, candidate, selected, metrics, analysis);
+        if (cost <= currentCost + COLOR_COHERENCE_MAX_DELTA && (candidateMissing < bestMissing || cost < bestCost)) {
+          bestIdx = candidateIndex;
+          bestCost = cost;
+          bestMissing = candidateMissing;
+        }
+      }
+
+      if (bestIdx !== selectedIndices[cellIndex]) {
+        selectedIndices[cellIndex] = bestIdx;
+        selected[cellIndex] = candidatePools[cellIndex][bestIdx];
+      }
+    }
+  }
+}
+
+function runEdgeContinuityPass(
+  candidatePools: ScreenCandidate[][],
+  selectedIndices: Int32Array,
+  selected: ScreenCandidate[],
+  analysis: SourceAnalysis,
+  metrics: PaletteMetricData
+) {
+  for (let pass = 0; pass < EDGE_CONTINUITY_PASSES; pass++) {
+    for (let cellIndex = 0; cellIndex < CELL_COUNT; cellIndex++) {
+      const cell = analysis.cells[cellIndex];
+      const current = selected[cellIndex];
+      const currentAlignment = computeDirectionalAlignmentBonus(
+        cell.detailScore,
+        cell.gradientDirection,
+        current.glyphDirection
+      );
+      if (currentAlignment <= 0 && cell.detailScore < 0.45) continue;
+
+      const currentRawCost = computeCellCost(cellIndex, current, selected, metrics, analysis);
+      let bestIdx = selectedIndices[cellIndex];
+      let bestAlignment = currentAlignment;
+      let bestAdjustedCost = currentRawCost - currentAlignment;
+
+      for (let candidateIndex = 0; candidateIndex < candidatePools[cellIndex].length; candidateIndex++) {
+        if (candidateIndex === selectedIndices[cellIndex]) continue;
+        const candidate = candidatePools[cellIndex][candidateIndex];
+        const candidateAlignment = computeDirectionalAlignmentBonus(
+          cell.detailScore,
+          cell.gradientDirection,
+          candidate.glyphDirection
+        );
+        if (candidateAlignment <= bestAlignment) continue;
+
+        const candidateRawCost = computeCellCost(cellIndex, candidate, selected, metrics, analysis);
+        if (candidateRawCost > currentRawCost + EDGE_CONTINUITY_MAX_DELTA) continue;
+
+        const candidateAdjustedCost = candidateRawCost - candidateAlignment;
+        if (candidateAdjustedCost < bestAdjustedCost) {
+          bestIdx = candidateIndex;
+          bestAlignment = candidateAlignment;
+          bestAdjustedCost = candidateAdjustedCost;
+        }
+      }
+
+      if (bestIdx !== selectedIndices[cellIndex]) {
+        selectedIndices[cellIndex] = bestIdx;
+        selected[cellIndex] = candidatePools[cellIndex][bestIdx];
+      }
+    }
+  }
+}
+
 async function solveScreen(
   candidatePools: ScreenCandidate[][],
   analysis: SourceAnalysis,
   metrics: PaletteMetricData,
   shouldCancel?: () => boolean
 ): Promise<PetsciiResult> {
-  const selectedIndices = new Int32Array(CELL_COUNT);
-  const selected = new Array<ScreenCandidate>(CELL_COUNT);
-
-  for (let i = 0; i < CELL_COUNT; i++) {
-    selectedIndices[i] = 0;
-    selected[i] = candidatePools[i][0];
-  }
+  const seededSelection = seedSelectionWithBrightnessDebt(candidatePools);
+  const selectedIndices = seededSelection.selectedIndices;
+  const selected = seededSelection.selected;
 
   for (let pass = 0; pass < SCREEN_SOLVE_PASSES; pass++) {
     let changed = false;
@@ -708,32 +1236,13 @@ async function solveScreen(
     let visitCount = 0;
 
     for (let cellIndex = start; cellIndex !== end; cellIndex += step) {
-      const cx = cellIndex % GRID_WIDTH;
-      const cy = Math.floor(cellIndex / GRID_WIDTH);
       const pool = candidatePools[cellIndex];
       let bestIdx = selectedIndices[cellIndex];
       let bestCost = Infinity;
 
       for (let candidateIndex = 0; candidateIndex < pool.length; candidateIndex++) {
         const candidate = pool[candidateIndex];
-        let cost = candidate.baseError;
-        if (cost >= bestCost) continue;
-
-        if (cx > 0) {
-          cost += computeNeighborPenalty(selected[cellIndex - 1], candidate, metrics, analysis, cy, cx - 1, true);
-          if (cost >= bestCost) continue;
-        }
-        if (cx < GRID_WIDTH - 1) {
-          cost += computeNeighborPenalty(candidate, selected[cellIndex + 1], metrics, analysis, cy, cx, true);
-          if (cost >= bestCost) continue;
-        }
-        if (cy > 0) {
-          cost += computeNeighborPenalty(selected[cellIndex - GRID_WIDTH], candidate, metrics, analysis, cy - 1, cx, false);
-          if (cost >= bestCost) continue;
-        }
-        if (cy < GRID_HEIGHT - 1) {
-          cost += computeNeighborPenalty(candidate, selected[cellIndex + GRID_WIDTH], metrics, analysis, cy, cx, false);
-        }
+        const cost = computeCellCost(cellIndex, candidate, selected, metrics, analysis);
 
         if (cost < bestCost) {
           bestCost = cost;
@@ -755,6 +1264,9 @@ async function solveScreen(
     if (!changed) break;
     await yieldToUI(shouldCancel);
   }
+
+  runColorCoherencePass(candidatePools, selectedIndices, selected, analysis, metrics);
+  runEdgeContinuityPass(candidatePools, selectedIndices, selected, analysis, metrics);
 
   const screencodes = new Array<number>(CELL_COUNT);
   const colors = new Array<number>(CELL_COUNT);
@@ -880,6 +1392,7 @@ async function solveStandardCharsetForAnalysis(
     const candidate: StandardSolvedModeCandidate = {
       conversion,
       error: solved.totalError,
+      offset: { x: 0, y: 0 },
     };
     if (!best || candidate.error < best.error) {
       best = candidate;
@@ -923,7 +1436,10 @@ export async function solveStandardCombo(
     `[TruSkii3000] combo ${charset} (${offset.x},${offset.y}): ` +
     `analyze=${(t1 - t0).toFixed(1)}ms solve=${(t2 - t1).toFixed(1)}ms total=${(t2 - t0).toFixed(1)}ms`
   );
-  return result;
+  return {
+    ...result,
+    offset,
+  };
 }
 
 export async function solveStandardOffset(
@@ -933,12 +1449,20 @@ export async function solveStandardOffset(
   metrics: PaletteMetricData,
   offset: AlignmentOffset,
   scoringKernel?: StandardCandidateScoringKernel,
-  shouldCancel?: () => boolean
+  shouldCancel?: () => boolean,
+  onProgress?: ProgressCallback
 ): Promise<StandardSolvedModeCandidate> {
   const analysis = analyzeAlignedSourceImage(preprocessed, metrics, settings, offset.x, offset.y);
   let best: StandardSolvedModeCandidate | undefined;
 
-  for (const charset of ['upper', 'lower'] as const) {
+  for (const [charsetIndex, charset] of (['upper', 'lower'] as const).entries()) {
+    const charsetProgress = onProgress
+      ? createScopedProgress(
+          (stage, detail, pct) => onProgress(stage, `${charset.toUpperCase()}${detail ? ` - ${detail}` : ''}`, pct),
+          charsetIndex * 50,
+          50
+        )
+      : undefined;
     const candidate = await solveStandardCharsetForAnalysis(
       analysis,
       settings,
@@ -946,9 +1470,10 @@ export async function solveStandardOffset(
       metrics,
       charset,
       scoringKernel,
-      undefined,
+      charsetProgress,
       shouldCancel
     );
+    candidate.offset = offset;
     if (!best || candidate.error < best.error) {
       best = candidate;
     }

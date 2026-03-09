@@ -11,6 +11,8 @@ export type WorkerMode = 'standard' | 'ecm' | 'mcm';
 export interface ConverterWorkerInitMessage {
   type: 'init';
   fontBitsByCharset: ConverterFontBits;
+  enabledModes?: WorkerMode[];
+  disableWasm?: boolean;
 }
 
 export interface ConverterWorkerStartRequestMessage {
@@ -54,6 +56,16 @@ export interface ConverterWorkerOffsetResultMessage {
   error: number;
 }
 
+export interface ConverterWorkerProgressMessage {
+  type: 'progress';
+  requestId: number;
+  mode: WorkerMode;
+  offsetId: number;
+  stage: string;
+  detail: string;
+  pct: number;
+}
+
 export interface ConverterWorkerCancelledMessage {
   type: 'cancelled';
   requestId: number;
@@ -69,6 +81,7 @@ export interface ConverterWorkerErrorMessage {
 
 export type ConverterWorkerResponseMessage =
   | ConverterWorkerReadyMessage
+  | ConverterWorkerProgressMessage
   | ConverterWorkerOffsetResultMessage
   | ConverterWorkerCancelledMessage
   | ConverterWorkerErrorMessage;

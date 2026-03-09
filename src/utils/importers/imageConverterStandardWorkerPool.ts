@@ -7,6 +7,7 @@ import {
   buildAlignmentOffsets,
   ConversionCancelledError,
 } from './imageConverterStandardCore';
+import { shareStandardPreprocessedImage } from './imageConverterSharedPreprocessed';
 import type {
   AlignmentOffset,
   ProgressCallback,
@@ -29,6 +30,8 @@ type WorkerSlot = {
   busy: boolean;
   currentRequestId: number | null;
   currentOffsetId: number | null;
+  currentOffset: AlignmentOffset | null;
+  currentProgressPct: number;
 };
 
 type WorkerReadyStatus = {
@@ -52,6 +55,18 @@ type ActiveRequest = {
   resolve: (result: StandardSolvedModeCandidate | undefined) => void;
   reject: (error: unknown) => void;
 };
+
+type WorkerAccelerationMode = 'auto' | 'js' | 'wasm';
+
+let workerAccelerationMode: WorkerAccelerationMode = 'auto';
+
+export function setStandardWorkerAccelerationMode(mode: WorkerAccelerationMode) {
+  if (workerAccelerationMode === mode) {
+    return;
+  }
+  workerAccelerationMode = mode;
+  disposeStandardConverterWorkers();
+}
 
 function buildOffsetJobs(): OffsetJob[] {
   const jobs: OffsetJob[] = [];
@@ -78,6 +93,8 @@ class StandardWorkerPool {
       busy: false,
       currentRequestId: null,
       currentOffsetId: null,
+      currentOffset: null,
+      currentProgressPct: 0,
     }));
 
     this.ready = Promise.all(this.slots.map(slot => new Promise<WorkerReadyStatus>((resolve, reject) => {
@@ -102,23 +119,35 @@ class StandardWorkerPool {
       slot.worker.postMessage({
         type: 'init',
         fontBitsByCharset,
+        enabledModes: ['standard'],
+        disableWasm: workerAccelerationMode === 'js',
       } satisfies ConverterWorkerRequestMessage);
     }))).then(workerStatuses => {
-      this.backend = workerStatuses.every(status => status.wasmEnabled) ? 'wasm' : 'js';
+      const allWorkersSupportWasm = workerStatuses.every(status => status.wasmEnabled);
+      if (workerAccelerationMode === 'js') {
+        this.backend = 'js';
+      } else {
+        // Quality policy: prefer the exact WASM scorer whenever every worker
+        // can initialize it, and fall back to JS only when WASM is unavailable.
+        this.backend = allWorkersSupportWasm ? 'wasm' : 'js';
+      }
+
       if (this.backend === 'wasm') {
         console.info('[TruSkii3000] Standard worker pool ready with WASM in all workers.', {
           workerCount: workerStatuses.length,
+          requestedMode: workerAccelerationMode,
           workers: workerStatuses.map(status => ({
             workerId: status.workerId,
             backend: 'wasm',
           })),
         });
       } else {
-        console.warn('[TruSkii3000] Standard worker pool using JS fallback.', {
+        console.info('[TruSkii3000] Standard worker pool using JS path.', {
           workerCount: workerStatuses.length,
+          requestedMode: workerAccelerationMode,
           workers: workerStatuses.map(status => ({
             workerId: status.workerId,
-            backend: status.wasmEnabled ? 'wasm' : 'js',
+            backend: status.wasmEnabled ? 'wasm-available' : 'js-only',
             wasmError: status.wasmError,
           })),
         });
@@ -162,12 +191,13 @@ class StandardWorkerPool {
     };
     this.activeRequest = active;
     onStandardBackend?.(this.backend);
+    const sharedPreprocessed = shareStandardPreprocessedImage(preprocessed);
 
     this.slots.forEach(slot => {
       slot.worker.postMessage({
         type: 'start-request',
         requestId,
-        preprocessed,
+        preprocessed: sharedPreprocessed,
         settings,
       } satisfies ConverterWorkerRequestMessage);
     });
@@ -200,6 +230,8 @@ class StandardWorkerPool {
       slot.busy = true;
       slot.currentRequestId = active.requestId;
       slot.currentOffsetId = job.offsetId;
+      slot.currentOffset = job.offset;
+      slot.currentProgressPct = 0;
       active.inflight++;
       slot.worker.postMessage({
         type: 'solve-offset',
@@ -226,6 +258,7 @@ class StandardWorkerPool {
         conversion: message.conversion,
         error: message.error,
         executionPath: this.backend,
+        offset: slot.currentOffset ?? { x: 0, y: 0 },
       };
       if (!active.best || solved.error < active.best.error) {
         active.best = solved;
@@ -233,10 +266,26 @@ class StandardWorkerPool {
       active.onProgress(
         'Alignment',
         `STANDARD ${active.completed} of ${active.total}`,
-        Math.round((active.completed / Math.max(1, active.total)) * 100)
+        Number(((active.completed / Math.max(1, active.total)) * 100).toFixed(1))
       );
       this.fillIdleWorkers();
       this.maybeFinish();
+      return;
+    }
+
+    if (message.type === 'progress') {
+      if (message.mode !== 'standard') {
+        return;
+      }
+      if (slot.currentOffsetId !== message.offsetId) {
+        return;
+      }
+      slot.currentProgressPct = Math.max(0, Math.min(100, Number(message.pct)));
+      active.onProgress(
+        message.stage,
+        this.formatProgressDetail(active, slot, message.offsetId, message.detail),
+        this.computeOverallPct(active)
+      );
       return;
     }
 
@@ -341,6 +390,30 @@ class StandardWorkerPool {
     slot.busy = false;
     slot.currentRequestId = null;
     slot.currentOffsetId = null;
+    slot.currentOffset = null;
+    slot.currentProgressPct = 0;
+  }
+
+  private computeOverallPct(active: ActiveRequest): number {
+    const inFlightPct = this.slots.reduce((sum, slot) => {
+      if (slot.currentRequestId !== active.requestId) {
+        return sum;
+      }
+      return sum + slot.currentProgressPct;
+    }, 0);
+    return Number((((active.completed * 100) + inFlightPct) / Math.max(1, active.total)).toFixed(1));
+  }
+
+  private formatProgressDetail(
+    active: ActiveRequest,
+    slot: WorkerSlot,
+    offsetId: number,
+    detail: string
+  ): string {
+    const offsetLabel = slot.currentOffset
+      ? `offset ${offsetId + 1}/${active.total} (${slot.currentOffset.x},${slot.currentOffset.y})`
+      : `offset ${offsetId + 1}/${active.total}`;
+    return detail ? `STANDARD ${offsetLabel} - ${detail}` : `STANDARD ${offsetLabel}`;
   }
 }
 

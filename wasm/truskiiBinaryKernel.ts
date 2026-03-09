@@ -27,25 +27,39 @@ const PIXEL_COUNT: i32 = 64;
 const WEIGHTED_PIXEL_ERROR_COUNT: i32 = PIXEL_COUNT * COLOR_COUNT;
 const MAX_POSITION_COUNT: i32 = CHAR_COUNT * PIXEL_COUNT;
 const OUTPUT_COUNT: i32 = CHAR_COUNT * COLOR_COUNT;
+const PAIR_DIFF_COUNT: i32 = COLOR_COUNT * COLOR_COUNT;
 
 // The host copies one cell's weighted pixel-vs-palette error matrix here:
 // 64 pixels * 16 colors. Entry [pixel, color] answers:
 // "what does it cost if this pixel is rendered with this C64 color?"
 const weightedPixelErrors = new Float32Array(WEIGHTED_PIXEL_ERROR_COUNT);
+const pairDiff = new Float32Array(PAIR_DIFF_COUNT);
+const thresholdBits = new Uint32Array(2);
 
 // Charset data is flattened up front so the kernel can stay in linear memory.
 // For each character, positionOffsets[ch..ch+1] points at the subset of pixel
 // indices where that character has a set bit.
 const positionOffsets = new Int32Array(CHAR_COUNT + 1);
 const flatPositions = new Uint8Array(MAX_POSITION_COUNT);
+const packedBinaryGlyphLo = new Uint32Array(CHAR_COUNT);
+const packedBinaryGlyphHi = new Uint32Array(CHAR_COUNT);
 
 // Output is one row per character and one column per palette color:
 // setErrs[ch, color] = sum(weightedPixelErrors[pixel, color]) over the set
 // pixels of that character.
 const outputSetErrs = new Float32Array(OUTPUT_COUNT);
+const outputHamming = new Uint8Array(CHAR_COUNT);
 
 export function getWeightedPixelErrorsPtr(): usize {
   return weightedPixelErrors.dataStart;
+}
+
+export function getPairDiffPtr(): usize {
+  return pairDiff.dataStart;
+}
+
+export function getThresholdBitsPtr(): usize {
+  return thresholdBits.dataStart;
 }
 
 export function getPositionOffsetsPtr(): usize {
@@ -56,8 +70,20 @@ export function getFlatPositionsPtr(): usize {
   return flatPositions.dataStart;
 }
 
+export function getPackedBinaryGlyphLoPtr(): usize {
+  return packedBinaryGlyphLo.dataStart;
+}
+
+export function getPackedBinaryGlyphHiPtr(): usize {
+  return packedBinaryGlyphHi.dataStart;
+}
+
 export function getOutputSetErrsPtr(): usize {
   return outputSetErrs.dataStart;
+}
+
+export function getOutputHammingPtr(): usize {
+  return outputHamming.dataStart;
 }
 
 export function computeSetErrs(): void {
@@ -87,5 +113,18 @@ export function computeSetErrs(): void {
       v128.store(outPtr + 32, f32x4.add(v128.load(outPtr + 32), v128.load(inPtr + 32)));
       v128.store(outPtr + 48, f32x4.add(v128.load(outPtr + 48), v128.load(inPtr + 48)));
     }
+  }
+}
+
+export function computeHammingDistances(): void {
+  const thresholdLo = thresholdBits[0];
+  const thresholdHi = thresholdBits[1];
+
+  for (let ch: i32 = 0; ch < CHAR_COUNT; ch++) {
+    outputHamming[ch] =
+      <u8>(
+        popcnt<u32>(packedBinaryGlyphLo[ch] ^ thresholdLo) +
+        popcnt<u32>(packedBinaryGlyphHi[ch] ^ thresholdHi)
+      );
   }
 }

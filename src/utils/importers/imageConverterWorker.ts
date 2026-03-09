@@ -2,6 +2,7 @@ import {
   buildCharsetConversionContext as buildModeCharsetConversionContext,
   buildPaletteColorsById as buildModePaletteColorsById,
   buildPaletteMetricData as buildModePaletteMetricData,
+  type ProgressCallback as ModeProgressCallback,
   solveModeOffsetWorker,
 } from './imageConverter';
 import type {
@@ -22,6 +23,7 @@ import {
 import type {
   CharsetConversionContext,
   PaletteMetricData,
+  ProgressCallback as StandardProgressCallback,
   StandardCandidateScoringKernel,
 } from './imageConverterStandardCore';
 import { BinaryWasmKernel } from './imageConverterBinaryWasm';
@@ -34,6 +36,7 @@ import type {
 type WorkerState = {
   standardContexts: Record<ConverterCharset, CharsetConversionContext> | null;
   modeContexts: Record<ConverterCharset, ModeCharsetConversionContext> | null;
+  enabledModes: Set<'standard' | 'ecm' | 'mcm'>;
   activeRequests: Set<number>;
   requestData: Map<number, {
     preprocessed: Parameters<typeof solveStandardOffset>[0];
@@ -49,6 +52,7 @@ type WorkerState = {
 const state: WorkerState = {
   standardContexts: null,
   modeContexts: null,
+  enabledModes: new Set(['standard', 'ecm', 'mcm']),
   activeRequests: new Set(),
   requestData: new Map(),
   standardPaletteCache: new Map(),
@@ -83,42 +87,53 @@ self.onmessage = async (event: MessageEvent<ConverterWorkerRequestMessage>) => {
 
   try {
     if (message.type === 'init') {
-      state.standardContexts = {
-        upper: buildCharsetConversionContext(message.fontBitsByCharset.upper),
-        lower: buildCharsetConversionContext(message.fontBitsByCharset.lower),
-      };
-      state.modeContexts = {
-        upper: buildModeCharsetConversionContext(message.fontBitsByCharset.upper, true),
-        lower: buildModeCharsetConversionContext(message.fontBitsByCharset.lower, true),
-      };
-      const [standardWasm, mcmWasm] = await Promise.all([
-        BinaryWasmKernel.create(),
-        McmWasmKernel.create(),
-      ]);
+      const enabledModes = new Set(message.enabledModes ?? ['standard', 'ecm', 'mcm']);
+      const needsStandard = enabledModes.has('standard');
+      const needsBinaryMode = enabledModes.has('ecm') || enabledModes.has('mcm');
+      const needsMcm = enabledModes.has('mcm');
+      state.enabledModes = enabledModes;
+      state.standardContexts = needsStandard
+        ? {
+            upper: buildCharsetConversionContext(message.fontBitsByCharset.upper),
+            lower: buildCharsetConversionContext(message.fontBitsByCharset.lower),
+          }
+        : null;
+      state.modeContexts = needsBinaryMode
+        ? {
+            upper: buildModeCharsetConversionContext(message.fontBitsByCharset.upper, needsMcm),
+            lower: buildModeCharsetConversionContext(message.fontBitsByCharset.lower, needsMcm),
+          }
+        : null;
+      const standardWasm = message.disableWasm || (!needsStandard && !needsBinaryMode)
+        ? { kernel: null, error: message.disableWasm ? 'WASM disabled by caller.' : undefined }
+        : await BinaryWasmKernel.create();
+      const mcmWasm = message.disableWasm || !needsMcm
+        ? { kernel: null, error: message.disableWasm ? 'WASM disabled by caller.' : undefined }
+        : await McmWasmKernel.create();
       state.scoringKernel = standardWasm.kernel;
       state.modeBinaryScoringKernel = standardWasm.kernel;
       state.mcmScoringKernel = mcmWasm.kernel;
-      if (standardWasm.kernel) {
+      if (needsStandard && standardWasm.kernel) {
         console.info('[TruSkii3000] Standard/ECM worker initialized with WASM kernel.');
-      } else {
+      } else if (needsStandard || enabledModes.has('ecm')) {
         console.warn('[TruSkii3000] Standard/ECM worker falling back to JavaScript scoring.', standardWasm.error);
       }
-      if (mcmWasm.kernel) {
+      if (needsMcm && mcmWasm.kernel) {
         console.info('[TruSkii3000] MCM worker initialized with WASM kernel.');
-      } else {
+      } else if (needsMcm) {
         console.warn('[TruSkii3000] MCM worker falling back to JavaScript scoring.', mcmWasm.error);
       }
       post({
         type: 'ready',
         wasmByMode: {
-          standard: Boolean(standardWasm.kernel),
-          ecm: Boolean(standardWasm.kernel),
-          mcm: Boolean(mcmWasm.kernel),
+          standard: needsStandard && Boolean(standardWasm.kernel),
+          ecm: needsBinaryMode && Boolean(standardWasm.kernel),
+          mcm: needsMcm && Boolean(mcmWasm.kernel),
         },
         wasmErrors: {
-          standard: standardWasm.error,
-          ecm: standardWasm.error,
-          mcm: mcmWasm.error,
+          standard: needsStandard ? standardWasm.error : undefined,
+          ecm: needsBinaryMode ? standardWasm.error : undefined,
+          mcm: needsMcm ? mcmWasm.error : undefined,
         },
       });
       return;
@@ -141,34 +156,59 @@ self.onmessage = async (event: MessageEvent<ConverterWorkerRequestMessage>) => {
     }
 
     if (message.type === 'solve-offset') {
-      if (!state.standardContexts || !state.modeContexts) {
-        throw new Error('Worker not initialized');
+      if (!state.enabledModes.has(message.mode)) {
+        throw new Error(`Worker does not support mode ${message.mode}`);
       }
       const request = state.requestData.get(message.requestId);
       if (!request) {
         throw new Error(`Unknown worker request ${message.requestId}`);
       }
       const shouldCancel = () => !state.activeRequests.has(message.requestId);
+      const postProgress = ((stage: string, detail: string, pct: number) => {
+        if (!state.activeRequests.has(message.requestId)) {
+          return;
+        }
+        post({
+          type: 'progress',
+          requestId: message.requestId,
+          mode: message.mode,
+          offsetId: message.offsetId,
+          stage,
+          detail,
+          pct,
+        });
+      }) as StandardProgressCallback & ModeProgressCallback;
       const result = message.mode === 'standard'
         ? await solveStandardOffset(
             request.preprocessed,
             request.settings,
-            state.standardContexts,
+            (() => {
+              if (!state.standardContexts) {
+                throw new Error('Worker not initialized for Standard mode');
+              }
+              return state.standardContexts;
+            })(),
             getStandardMetrics(request.settings.paletteId),
             message.offset,
             state.scoringKernel ?? undefined,
-            shouldCancel
+            shouldCancel,
+            postProgress
           )
         : await solveModeOffsetWorker(
             message.mode,
             request.preprocessed as PreprocessedFittedImage,
             request.settings,
-            state.modeContexts,
+            (() => {
+              if (!state.modeContexts) {
+                throw new Error(`Worker not initialized for ${message.mode.toUpperCase()} mode`);
+              }
+              return state.modeContexts;
+            })(),
             getModeMetrics(request.settings.paletteId),
             message.offset,
             state.modeBinaryScoringKernel ?? undefined,
             state.mcmScoringKernel ?? undefined,
-            () => {},
+            postProgress,
             shouldCancel
           );
       if (!state.activeRequests.has(message.requestId)) {
