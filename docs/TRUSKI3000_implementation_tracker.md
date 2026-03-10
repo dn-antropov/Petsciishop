@@ -1,33 +1,12 @@
 # TRUSKI3000 Implementation Tracker
 
-CODEX: Status key: **DONE** | **PARTIAL** | **MISSING** | **DIFFERENT** (valid alternative approach) | **NOT APPLICABLE** (excluded by strict standard C64 PETSCII constraints)
+Status key: **DONE** | **PARTIAL** | **MISSING** | **DIFFERENT** (valid alternative approach) | **NOT APPLICABLE** (excluded by strict standard C64 PETSCII constraints)
 
 Spec reference: `docs/TRUSKI3000_Engine.md`
-Main implementation: `src/utils/importers/imageConverter.ts` (~2316 lines)
+Standard mode: `src/utils/importers/imageConverterStandardCore.ts` (independent scoring pipeline)
+ECM/MCM modes: `src/utils/importers/imageConverter.ts`
 
----
-
-## CODEX: Current Color Fidelity Investigation (2026-03-09)
-
-CODEX: Recent investigation on the Skeletor / True Neutral case found that a chroma-aware sample-selection fix for ECM/MCM global color search helped `ECM` modestly, but did **not** materially improve `Standard`, and did not materially improve `MCM` either.
-
-CODEX: Current working conclusion:
-
-CODEX: - global sample-selection bias was real and worth fixing
-
-CODEX: - but it is **not sufficient** to solve the color-fidelity problem
-
-CODEX: - the stronger remaining issue appears to be the local error metric still under-valuing chroma relative to luminance
-
-CODEX: Practical implication:
-
-CODEX: - `ECM` may now be near its realistic ceiling on some images
-
-CODEX: - `Standard` is still the clearest evidence that color matching is wrong
-
-CODEX: - `MCM` still appears to inherit the same gray-biased local scoring problem, plus its own mode constraints
-
-CODEX: Next recommended experiment: raise `CHROMA_ERROR_WEIGHT` modestly (`0.85 -> 1.0 -> 1.1`) and retest Standard/MCM before doing more ECM-specific tuning.
+Last updated: 2026-03-10
 
 ---
 
@@ -35,15 +14,14 @@ CODEX: Next recommended experiment: raise `CHROMA_ERROR_WEIGHT` modestly (`0.85 
 
 | Feature | Status | Location | Notes |
 |---------|--------|----------|-------|
-| OKLAB conversion + stay throughout | **DONE** | imageConverter.ts:48-105 | `sRGBtoOklab()`, correct matrices, never back to RGB until output |
-| Per-cell mean luminance (L, a, b) | **DONE** | imageConverter.ts:530-750 | `meanL`, `meanA`, `meanB` per cell |
-| Per-cell variance | **DONE** | imageConverter.ts:376 | `variances` Float64Array, cells ranked |
-
-CODEX: Note: current ECM/MCM global color search now uses a chroma-aware importance signal rather than pure luminance-variance ranking alone, but this has only modestly improved ECM and has not materially fixed Standard/MCM color fidelity.
-| Dominant gradient direction | **MISSING** | — | No per-cell directionality analysis |
-| Detail score (Laplacian) | **MISSING** | — | Research doc notes USM preferred over Laplacian, neither implemented |
-| Perceptual saliency mask | **PARTIAL** | imageConverter.ts:686-698 | Per-pixel deviation-from-mean weighting (`saliencyAlpha=3.0`). No face/edge/focal-point detection |
-| Scale/crop cell-aware | **DONE** | imageConverter.ts:479-533 | Multi-step canvas halving, integer alignment, no partial cells |
+| OKLAB conversion + stay throughout | **DONE** | imageConverter.ts, imageConverterStandardCore.ts | `sRGBtoOklab()`, correct matrices, never back to RGB until output |
+| Per-cell mean luminance (L, a, b) | **DONE** | imageConverterStandardCore.ts | `avgL`, `avgA`, `avgB` per SourceCellData |
+| Per-cell variance | **DONE** | imageConverter.ts | `variances` Float64Array, cells ranked |
+| Detail score (Laplacian) | **DONE** | imageConverterCellMetrics.ts | 8-neighbor Laplacian per cell, normalized 0..1. Used by CSF, edge alignment, coverage penalty |
+| Dominant gradient direction | **DONE** | imageConverterCellMetrics.ts | Sobel Gx/Gy quantized to 5 bins: isotropic, horizontal, vertical, diagonal-right, diagonal-left |
+| Luminance range per cell | **DONE** | imageConverterStandardCore.ts | `lumRange` (maxL - minL) in SourceCellData |
+| Perceptual saliency mask | **PARTIAL** | imageConverter.ts | Per-pixel deviation-from-mean weighting (`saliencyAlpha=3.0`). No face/edge/focal-point detection |
+| Scale/crop cell-aware | **DONE** | imageConverter.ts | Multi-step canvas halving, integer alignment, no partial cells |
 
 ---
 
@@ -51,12 +29,12 @@ CODEX: Note: current ECM/MCM global color search now uses a chroma-aware importa
 
 | Feature | Status | Location | Notes |
 |---------|--------|----------|-------|
-| Standard mode support | **DONE** | imageConverter.ts, imageConverterStandardCore.ts | Full 256-char, fg+bg per cell |
-| ECM support | **DONE** | imageConverter.ts:935+, ecm.ts | 64-char subset, 4 background registers |
-| MCM support | **DONE** | imageConverter.ts:963+, mcm.ts | 2bpp 4×8, 4 colors per cell |
-| CODEX: Legal per-cell hires-vs-multicolor behavior within MCM | **DONE** | imageConverter.ts:1297-1346, 1889-1916 | Current MCM solver already considers binary vs multicolor cell candidates inside a legal MCM screen; this is valid standard C64 behavior, not cross-mode Standard/ECM/MCM mixing |
-| CODEX: Global legal mode evaluation across Standard/ECM/MCM | **PARTIAL** | imageConverter.ts:2277-2311 | Modes can be solved and compared in one run, but the converter does not yet auto-select one best full-screen legal mode |
-| CODEX: Per-region Standard/ECM/MCM mixing | **NOT APPLICABLE** | — | Out of scope for standard C64 PETSCII without raster tricks |
+| Standard mode support | **DONE** | imageConverterStandardCore.ts | Full 256-char, fg+bg per cell, independent scoring pipeline |
+| ECM support | **DONE** | imageConverter.ts | 64-char subset, 4 background registers |
+| MCM support | **DONE** | imageConverter.ts | 2bpp 4×8, 4 colors per cell |
+| Legal per-cell hires-vs-multicolor within MCM | **DONE** | imageConverter.ts | Standard C64 behavior, not cross-mode mixing |
+| Global legal mode evaluation across Standard/ECM/MCM | **PARTIAL** | imageConverter.ts | Modes can be solved and compared, but no auto-select of best mode |
+| Per-region Standard/ECM/MCM mixing | **NOT APPLICABLE** | — | Out of scope for standard C64 PETSCII without raster tricks |
 
 ---
 
@@ -64,10 +42,11 @@ CODEX: Note: current ECM/MCM global color search now uses a chroma-aware importa
 
 | Feature | Status | Location | Notes |
 |---------|--------|----------|-------|
-| Colodore palette in OKLAB | **DONE** | c64Palettes.ts, imageConverter.ts:148 | Multiple palettes available; Colodore is default |
-| 16x16 perceptual distance LUT | **DONE** | imageConverter.ts:148-172 | `pairDiff` Float64Array. In JS memory, not WASM linear memory |
-| ECM: 4 bg registers via weighted k-means | **DIFFERENT** | imageConverter.ts:935, 1584-1592 | Exhaustive C(16,4)=1820 enumeration + ranking. Comprehensive but not k-means |
-| MCM: shared color via weighted k-means | **DIFFERENT** | imageConverter.ts:963, 1670 | Exhaustive 16x15x14=3360 enumeration + ranking. Same approach |
+| Colodore palette in OKLAB | **DONE** | c64Palettes.ts, imageConverter.ts | Multiple palettes available; Colodore is default |
+| 16×16 perceptual distance LUT | **DONE** | imageConverter.ts | `pairDiff` Float64Array. In JS memory, not WASM linear memory |
+| Standard: background selection | **DONE** | imageConverterStandardCore.ts | Coarse scorer samples 160 cells, ranks all 16 backgrounds, top 8 finalists. Coverage extremity penalty scaled by lumDistance steers toward PETSCII-friendly backgrounds |
+| ECM: 4 bg registers | **DIFFERENT** | imageConverter.ts | Exhaustive C(16,4)=1820 enumeration + ranking (not k-means) |
+| MCM: shared color selection | **DIFFERENT** | imageConverter.ts | Exhaustive 16×15×14=3360 enumeration + ranking (not k-means) |
 | Saliency weighting in palette solve | **MISSING** | — | Saliency used per-pixel during matching, not during register selection |
 
 ---
@@ -76,33 +55,38 @@ CODEX: Note: current ECM/MCM global color search now uses a chroma-aware importa
 
 | Feature | Status | Location | Notes |
 |---------|--------|----------|-------|
-| 256-char PETSCII set loaded | **DONE** | imageConverter.ts:400-450 | From `system-charset.bin` ROM |
-| Standard/ECM: u64 bit-packed glyphs | **PARTIAL** | imageConverter.ts:400-450 | Stored as flattened position arrays, not literal u64. Functionally equivalent |
-| MCM: 2bpp 4x8 patterns | **DONE** | imageConverter.ts:420-470 | `refMcmBpCount`, `refMcmPositions` for all 4 bit-pair patterns |
-| Glyph tagging (coverage) | **PARTIAL** | imageConverter.ts:449, 1017 | `refSetCount` tracks pixels-set per glyph. No normalized coverage fraction |
-| Glyph tagging (spatial frequency) | **MISSING** | — | No frequency analysis |
-| Glyph tagging (directionality) | **MISSING** | — | No directional bias tagging |
-| Glyph tagging (symmetry) | **MISSING** | — | No symmetry metadata |
-| Typographic character exclusion | **MISSING** | — | All 256 chars included by default |
-| Precomputed glyph luminance profiles | **MISSING** | — | No per-glyph mean/variance for pre-filtering |
+| 256-char PETSCII set loaded | **DONE** | imageConverter.ts | From `system-charset.bin` ROM |
+| Standard/ECM: bit-packed glyphs | **DONE** | imageConverterBitPacking.ts | `packBinaryGlyphBitplanes()` — lo/hi Uint32Array pairs |
+| MCM: 2bpp 4×8 patterns | **DONE** | imageConverter.ts, imageConverterBitPacking.ts | `refMcmBpCount`, `refMcmPositions`, packed symbol masks |
+| Glyph tagging: coverage | **DONE** | glyphAtlas.ts | Float32Array, normalized 0..1 |
+| Glyph tagging: spatial frequency | **DONE** | glyphAtlas.ts | Float32Array, edge transition density 0..1. Used by CSF penalty |
+| Glyph tagging: directionality | **DONE** | glyphAtlas.ts | 5-way dominant direction (matches cell gradient bins) |
+| Glyph tagging: symmetry | **DONE** | glyphAtlas.ts | Horizontal, vertical, and rotational (180°) boolean flags |
+| Glyph luminance profiles | **DONE** | glyphAtlas.ts | `luminanceMean` and `luminanceVariance` Float32Arrays |
+| Typographic character exclusion | **DONE** | imageConverterHeuristics.ts | `isTypographicScreencode()` + `settings.includeTypographic` toggle |
 
 ---
 
-## 5. Cell Matching Engine (WASM Core)
+## 5. Cell Matching Engine
 
 | Feature | Status | Location | Notes |
 |---------|--------|----------|-------|
-| Patch extraction in OKLAB (L/ab split) | **DONE** | imageConverter.ts, imageConverterStandardCore.ts | Separate `srcL`, `srcA`, `srcB` Float32Arrays |
-| Color candidate enumeration | **DONE** | imageConverter.ts | All valid fg/bg pairs generated per mode |
-| Candidate pruning via distance LUT | **MISSING** | — | LUT exists but all pairs tested; no fast pruning threshold |
-| Threshold map + pack to u64/u32 | **DIFFERENT** | imageConverterStandardCore.ts:543-558 | Uses per-pixel error accumulation over set-positions instead of threshold→XOR→popcount. Mathematically equivalent |
-| XOR + popcount Hamming distance | **DIFFERENT** | — | Error accumulation approach; valid alternative |
-| WASM SIMD (i64x2, 2 glyphs/op) | **PARTIAL** | wasm/truskiiBinaryKernel.ts | f32x4 SIMD for error accumulation (4 colors/op, not 2 glyphs/op). Currently slower than JS — only `computeSetErrs` ported |
-| CSF-weighted scoring (detail penalty) | **MISSING** | — | No penalty for high-freq glyph in smooth region (needs detail score) |
-| Saliency weight in scoring | **DONE** | imageConverter.ts:713 | `weights[p] * perceptualError(...)` |
-| Chroma preservation bonus | **MISSING** | — | No hue-matching bonus |
-| Luminance match penalty | **DONE** | imageConverter.ts:596 | `lumMatchWeight * lumDiff^2` |
-| Brightness debt accumulation | **MISSING** | — | No scanline-level error propagation between cells |
+| Patch extraction in OKLAB (L/ab split) | **DONE** | imageConverterStandardCore.ts | Separate `srcL`, `srcA`, `srcB` Float32Arrays |
+| Color candidate enumeration | **DONE** | imageConverterStandardCore.ts, imageConverter.ts | All valid fg/bg pairs per mode |
+| Candidate pruning via contrast LUT | **DONE** | imageConverterHeuristics.ts | `hasMinimumContrast()` with `MIN_PAIR_DIFF_RATIO=0.16` threshold |
+| Set-error-matrix scoring | **DONE** | imageConverterStandardCore.ts | Primary scoring path: per-pixel weighted error accumulated over set positions |
+| XOR + popcount Hamming path | **DONE** | imageConverterBitPacking.ts | `computeBinaryHammingDistancesJs()` implemented but **disabled** (`ENABLE_EXPERIMENTAL_HAMMING_FAST_PATH=false`) — set-error path produces better results |
+| WASM kernel (computeSetErrs) | **DONE** | wasm/truskiiBinaryKernel.ts | f32x4 SIMD for error accumulation. Currently **slower than JS** on most workloads |
+| CSF-weighted glyph scoring | **DONE** | imageConverterStandardCore.ts, imageConverterHeuristics.ts | `computeCsfPenalty()` — penalizes high-freq glyphs in smooth regions, relieved by blend quality (`BLEND_CSF_RELIEF=1.5`) |
+| Directional alignment bonus | **DONE** | imageConverterHeuristics.ts, imageConverterStandardCore.ts | `computeDirectionalAlignmentBonus()` — rewards glyphs matching cell gradient direction (`EDGE_ALIGNMENT_WEIGHT=14.0`) |
+| Blend match bonus | **DONE** | imageConverterStandardCore.ts | Standalone reward for fg/bg pairs whose perceptual blend matches source color (`BLEND_MATCH_WEIGHT=3.0`) |
+| Coverage extremity penalty (coarse) | **DONE** | imageConverterStandardCore.ts | Penalizes near-0% or near-100% coverage in coarse scorer. Scaled by luminance distance between cell avgL and background L (`COVERAGE_EXTREMITY_WEIGHT=20.0`). Protects dark images automatically |
+| Wildcard candidate admission | **DONE** | imageConverterStandardCore.ts | Low-contrast candidates enter pool when within score margin (`0.15`) or blend quality > `0.7`. Max 2 per cell |
+| Soft contrast penalty | **DONE** | imageConverterStandardCore.ts | Replaces hard `hasMinimumContrast` gate for Standard coarse scoring |
+| Saliency weight in scoring | **DONE** | imageConverter.ts | `weights[p] * perceptualError(...)` |
+| Luminance match penalty | **DONE** | imageConverter.ts | `lumMatchWeight * lumDiff²` |
+| Chroma preservation bonus | **PARTIAL** | imageConverterHeuristics.ts | `computeHuePreservationBonus()` implemented but **disabled** (`CHROMA_BONUS_WEIGHT=0`) |
+| Edge mismatch weighting | **PARTIAL** | imageConverterStandardCore.ts | Implemented but **disabled** (`EDGE_MISMATCH_WEIGHT=0.0`) pending color-selection fixes |
 
 ---
 
@@ -110,48 +94,82 @@ CODEX: Note: current ECM/MCM global color search now uses a chroma-aware importa
 
 | Feature | Status | Location | Notes |
 |---------|--------|----------|-------|
-| Multi-pass solver | **DONE** | imageConverter.ts:689-780 | 5 passes (`SCREEN_SOLVE_PASSES`) re-evaluating cells with neighbor context |
-| Neighbor color penalty | **DONE** | imageConverter.ts:1358 | `computeNeighborPenalty()` scores edge color compatibility |
-| Color coherence pass (outlier detection) | **MISSING** | — | No isolated single-cell color re-matching |
-| Edge continuity pass (glyph directionality) | **MISSING** | — | Boundary diffs tracked but no directional alignment refinement |
+| Multi-pass solver | **DONE** | imageConverterStandardCore.ts | 7 passes (`SCREEN_SOLVE_PASSES`) re-evaluating cells with neighbor context |
+| Repeat penalty | **DONE** | imageConverterStandardCore.ts | Screen-level character diversity (`REPEAT_PENALTY=28.0`), scaled by self-tile similarity |
+| Brightness debt accumulation | **DONE** | imageConverterStandardCore.ts | Scanline-level error propagation between cells (`BRIGHTNESS_DEBT_WEIGHT=64.0`, `DECAY=0.6`, `CLAMP=0.18`) |
+| Color coherence pass | **DONE** | imageConverterStandardCore.ts | 3 passes (`COLOR_COHERENCE_PASSES`), re-matches outlier cells constrained to neighbor colors (`MAX_DELTA=18.0`) |
+| Edge continuity pass | **DONE** | imageConverterStandardCore.ts | 3 passes (`EDGE_CONTINUITY_PASSES`), aligns glyph directionality along detected edges (`MAX_DELTA=12.0`) |
+| Neighbor color penalty | **DONE** | imageConverter.ts | `computeNeighborPenalty()` scores edge color compatibility |
 | ECM register re-solve pass | **MISSING** | — | No k-means on actual assignments; no targeted re-match |
 
 ---
 
-## 7. Output Layer
+## 7. Output & Measurement
 
 | Feature | Status | Location | Notes |
 |---------|--------|----------|-------|
-| Screen RAM + color RAM bytes | **DONE** | imageConverter.ts:227-237 | `screencodes[]`, `colors[]`, `bgIndices[]`, `ecmBgColors[]`, `mcmSharedColors[]` |
-| PNG preview with VIC-II ROM bitmaps | **DONE** | imageConverter.ts:1839-1872 | `renderPreview()` / `renderMcmPreview()` at 320x200 |
-| Correct C64 aspect ratio (4:3) | **MISSING** | — | Preview is raw 320x200, no PAR correction |
-| CODEX: Chosen screen mode + per-cell metadata (colors, error scores) | **MISSING** | — | Root `ConversionResult.mode` exists, but no exported per-cell metadata or mode-ranking diagnostics |
-| OKLAB deltaE quality metric | **MISSING** | — | `perceptualError()` used internally; no source-vs-output comparison exposed |
+| Screen RAM + color RAM bytes | **DONE** | imageConverter.ts | `screencodes[]`, `colors[]`, `bgIndices[]`, `ecmBgColors[]`, `mcmSharedColors[]` |
+| PNG preview with VIC-II ROM bitmaps | **DONE** | imageConverter.ts | `renderPreview()` / `renderMcmPreview()` at 320×200 |
+| OkLab quality metrics suite | **DONE** | imageConverterQualityMetrics.ts | lumaRMSE, chromaRMSE, meanDeltaE, per-tile SSIM, cellSSIM, p95DeltaE, worst-tile tracking |
+| cellSSIM (cell-averaged SSIM) | **DONE** | imageConverterQualityMetrics.ts | Structural similarity at 40×25 cell grid (8×8 averaged) with 3×3 sliding window. Captures "looks right from viewing distance" |
+| Test harness | **DONE** | scripts/truski3000-harness/run.mjs | 5 commands: compare, record, benchmark, parity, validate. Visual comparison HTML, named snapshots, character utilization diagnostics, color pair gap analysis |
+| Correct C64 aspect ratio (4:3) | **MISSING** | — | Preview is raw 320×200, no PAR correction |
+| Global mode auto-selection + ranking | **MISSING** | — | Modes solved independently, no auto-select or comparison output |
+| Per-cell metadata export | **MISSING** | — | No exported per-cell colors/error/detail diagnostics |
 
 ---
 
-## Priority Roadmap
+## Active Standard Mode Scoring Constants
 
-### High Impact (quality visible to users)
+All constants in `imageConverterStandardCore.ts`:
 
-1. **Brightness debt accumulation** — scanline scalar nudging neighboring cell thresholds. Cheap to implement, reduces banding artifacts
-2. **CSF-weighted glyph scoring** — requires detail score (Laplacian or similar), then penalize high-freq glyphs in smooth regions. Reduces "noise texture" in flat areas
-3. **Color coherence post-pass** — detect isolated outlier cells, re-match constrained to neighbor colors. Simple algorithm, measurable cleanup
-4. **Chroma preservation bonus** — bias scoring toward hue-preserving color assignments. Small change in scoring function
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| LUMA_ERROR_WEIGHT | 1.0 | Brightness error weight in OkLab |
+| CHROMA_ERROR_WEIGHT | 2.0 | Color error weight (2× luma) |
+| BLEND_CSF_RELIEF | 1.5 | CSF penalty reduction for good blend matches |
+| BLEND_QUALITY_SHARPNESS | 48.0 | Blend match strictness |
+| BLEND_MATCH_WEIGHT | 3.0 | Standalone blend color match reward |
+| COVERAGE_EXTREMITY_WEIGHT | 20.0 | Coarse scorer: penalizes extreme coverage × lumDistance |
+| WILDCARD_SCORE_MARGIN | 0.15 | Low-contrast candidate admission threshold |
+| WILDCARD_BLEND_QUALITY_MIN | 0.7 | Direct wildcard admission on blend quality |
+| WILDCARD_MAX_ADMITTED | 2 | Max wildcards per cell |
+| REPEAT_PENALTY | 28.0 | Screen-level character diversity |
+| CONTINUITY_PENALTY | 0.14 | Edge continuity between adjacent cells |
+| MODE_SWITCH_PENALTY | 10.0 | Upper/lower charset switch cost |
+| BRIGHTNESS_DEBT_WEIGHT | 64.0 | Scanline brightness error propagation |
+| BRIGHTNESS_DEBT_DECAY | 0.6 | Debt carry-over between cells |
+| BRIGHTNESS_DEBT_CLAMP | 0.18 | Maximum debt accumulation |
+| COLOR_COHERENCE_MAX_DELTA | 18.0 | Max error increase for coherence re-match |
+| COLOR_COHERENCE_PASSES | 3 | Coherence refinement iterations |
+| EDGE_CONTINUITY_MAX_DELTA | 12.0 | Max error increase for edge alignment |
+| EDGE_CONTINUITY_PASSES | 3 | Edge refinement iterations |
+| STANDARD_SAMPLE_COUNT | 160 | Cells sampled in coarse background scorer |
+| STANDARD_FINALIST_COUNT | 8 | Background finalists from coarse scorer |
+| STANDARD_POOL_SIZE | 10 | Candidates per cell per background |
+| SCREEN_SOLVE_PASSES | 7 | Solver iterations with neighbor context |
 
-### Medium Impact (architectural)
+**Disabled:** EDGE_MISMATCH_WEIGHT=0.0, CHROMA_BONUS_WEIGHT=0, ENABLE_EXPERIMENTAL_HAMMING_FAST_PATH=false
 
-5. **Glyph atlas tagging** — precompute coverage/frequency/directionality/symmetry per glyph. Enables CSF weighting and edge continuity
-6. **Edge continuity post-pass** — align glyph directionality along detected edges. Requires glyph tagging first
-7. **ECM register re-solve** — k-means on actual cell assignments, targeted re-match. Improves ECM quality on complex images
-8. **Candidate pruning** — use distance LUT to skip perceptually-similar color pairs. Performance win on Standard mode
+---
 
-### Lower Priority (advanced features)
+## Remaining Work
 
-9. **CODEX: Global legal mode auto-selection** — rank Standard/ECM/MCM as full-screen legal outputs and choose the best one for export. No per-region cross-mode mixing
-10. **WASM kernel buildout** — port remaining hot paths, resolve perf regression in current kernel
-11. **Distance LUT in WASM memory** — move from JS Float64Array to WASM linear memory for SIMD access
-12. **Advanced saliency** — edge-weighted or ML-based saliency map beyond local deviation
-13. **Output quality metric** — expose OKLAB deltaE comparison (source vs rendered)
-14. **CODEX: Aspect-ratio-correct preview** — present the preview at 4:3 display aspect instead of raw 320x200 square pixels
-15. **CODEX: Global mode + per-cell metadata export** — chosen screen mode at result level, plus per-cell colors, error scores, and MCM cell-behavior metadata where applicable
+### Phase 6 — Global Mode Selection (not started)
+1. **Global legal mode auto-selection** — Score Standard/ECM/MCM, choose best full-screen mode
+2. **Per-mode ranking + comparison output** — Expose total error per mode for UI
+3. **Advanced saliency** — Edge energy + center bias (beyond deviation-from-mean)
+
+### Performance (Phase 5, low priority)
+4. **WASM kernel performance** — Current WASM is slower than JS; needs profiling and optimization
+5. **Distance LUT in WASM memory** — Move pairDiff to WASM linear memory for SIMD access
+
+### Quality polish (ongoing)
+6. **Chroma preservation bonus** — Implemented but disabled (weight=0); needs tuning
+7. **Edge mismatch weighting** — Implemented but disabled (weight=0.0); needs color-selection fixes
+8. **ECM register re-solve** — k-means on actual assignments for better ECM quality
+9. **Saliency weighting in palette solve** — Use saliency during register selection, not just matching
+
+### Output polish
+10. **Aspect-ratio-correct preview** — 4:3 display aspect
+11. **Per-cell metadata export** — Colors, error scores, detail diagnostics per cell
