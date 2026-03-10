@@ -34,6 +34,7 @@ import {
   packBinaryThresholdMap,
   packMcmGlyphSymbolMasks,
   packMcmThresholdMasks,
+  popcount32,
   type PackedMcmGlyphMasks,
 } from './imageConverterBitPacking';
 import { computeCellStructureMetrics, type CellGradientDirection } from './imageConverterCellMetrics';
@@ -61,6 +62,10 @@ const SCREEN_SOLVE_PASSES = 7;
 
 const LUMA_ERROR_WEIGHT = 1.0;
 const CHROMA_ERROR_WEIGHT = 1.0;
+// TRUSKI3000: Edge-weighted scoring — penalize character mismatches at edge pixels
+// more heavily than flat-zone mismatches. This steers character selection toward
+// glyphs whose shapes align with source edges/contours.
+const EDGE_MISMATCH_WEIGHT = 0.0; // TRUSKI3000: disabled pending color-selection fixes; see edge-weight experiment notes
 const REPEAT_PENALTY = 28.0;
 const CONTINUITY_PENALTY = 0.14;
 const MODE_SWITCH_PENALTY = 10.0;
@@ -250,8 +255,8 @@ export type ConverterAccelerationMode = 'wasm' | 'js';
 export const CONVERTER_DEFAULTS: ConverterSettings = {
   brightnessFactor: 1.0,
   saturationFactor: 1.0,
-  saliencyAlpha: 0.0,
-  lumMatchWeight: 0,
+  saliencyAlpha: 2.0,
+  lumMatchWeight: 4,
   csfWeight: 0,
   includeTypographic: true,
   accelerationMode: 'wasm',
@@ -320,6 +325,12 @@ export interface ConversionCellMetadata {
   detailScore: number;
   saliencyWeight: number;
   mcmCellIsHires?: boolean;
+  // Color diagnostics: ideal 2-color quantization vs actual choice
+  idealColor1?: number;  // palette index of best-fitting dominant color
+  idealColor2?: number;  // palette index of second color
+  idealError?: number;   // error if ideal pair had been used
+  chosenError?: number;  // error of the actually chosen pair
+  screencode?: number;   // chosen character
 }
 
 export interface ConversionOutputs {
@@ -365,6 +376,9 @@ interface SourceCellData {
   saliencyWeight: number;
   detailScore: number;
   gradientDirection: CellGradientDirection;
+  edgeMaskLo: number;
+  edgeMaskHi: number;
+  edgePixelCount: number;
 }
 
 interface SourceAnalysis {
@@ -898,6 +912,53 @@ function analyzeAlignedSourceImage(
         }
       }
 
+      // Compute per-pixel edge importance via Sobel magnitude, pack into bitmask
+      let edgeMaskLo = 0;
+      let edgeMaskHi = 0;
+      let edgePixelCount = 0;
+      {
+        // Compute Sobel magnitude for each pixel; mark top fraction as edge pixels
+        const sobelMag = new Float32Array(PIXELS_PER_CELL);
+        let maxMag = 0;
+        for (let py = 0; py < 8; py++) {
+          for (let px = 0; px < 8; px++) {
+            const p = py * 8 + px;
+            // Use central differences where possible, clamp at edges
+            const x = cx * 8 + px;
+            const y = cy * 8 + py;
+            const idx = y * CANVAS_WIDTH + x;
+
+            const lC = srcL[idx];
+            const lN = py > 0 ? srcL[idx - CANVAS_WIDTH] : lC;
+            const lS = py < 7 ? srcL[idx + CANVAS_WIDTH] : lC;
+            const lW = px > 0 ? srcL[idx - 1] : lC;
+            const lE = px < 7 ? srcL[idx + 1] : lC;
+
+            const gx = lE - lW;
+            const gy = lS - lN;
+            const mag = Math.sqrt(gx * gx + gy * gy);
+            sobelMag[p] = mag;
+            if (mag > maxMag) maxMag = mag;
+          }
+        }
+        // Mark pixels above 30% of max magnitude as edge pixels
+        if (maxMag > 0) {
+          const edgeThreshold = maxMag * 0.3;
+          for (let p = 0; p < 64; p++) {
+            if (sobelMag[p] >= edgeThreshold) {
+              edgePixelCount++;
+              if (p < 32) {
+                edgeMaskLo |= 1 << p;
+              } else {
+                edgeMaskHi |= 1 << (p - 32);
+              }
+            }
+          }
+        }
+      }
+      edgeMaskLo = edgeMaskLo >>> 0;
+      edgeMaskHi = edgeMaskHi >>> 0;
+
       cells[cellIndex] = {
         weightedPixelErrors,
         totalErrByColor,
@@ -908,6 +969,9 @@ function analyzeAlignedSourceImage(
         saliencyWeight: saliencyTotal / PIXELS_PER_CELL,
         detailScore: structureMetrics.detailScores[cellIndex],
         gradientDirection: structureMetrics.gradientDirections[cellIndex] as CellGradientDirection,
+        edgeMaskLo,
+        edgeMaskHi,
+        edgePixelCount,
       };
     }
   }
@@ -2522,6 +2586,11 @@ function buildBinaryCandidatePoolsForCellByBackground(
   const scoringTables = buildBinaryCellScoringTables(cell, context, metrics, settings, charLimit);
 
   if (canUseBinaryHammingPath(settings, scoringKernel)) {
+    const edgeWeight = EDGE_MISMATCH_WEIGHT * cell.detailScore;
+    const hasEdges = cell.edgePixelCount > 0 && edgeWeight > 0.01;
+    const eMaskLo = cell.edgeMaskLo;
+    const eMaskHi = cell.edgeMaskHi;
+
     for (let bi = 0; bi < backgrounds.length; bi++) {
       const bg = backgrounds[bi];
       const pool = pools[bi];
@@ -2529,10 +2598,28 @@ function buildBinaryCandidatePoolsForCellByBackground(
       for (let fgIndex = 0; fgIndex < foregrounds.length; fgIndex++) {
         const fg = foregrounds[fgIndex];
         const hammingDistances = computeBinaryHammingDistances(cell, fg, bg, context, metrics, scoringKernel);
+
+        // For edge-weighted scoring, compute threshold map to XOR with glyphs
+        let thresholdLo = 0, thresholdHi = 0;
+        if (hasEdges) {
+          [thresholdLo, thresholdHi] = packBinaryThresholdMap(cell.weightedPixelErrors, fg, bg);
+        }
+
         for (let charIndex = 0; charIndex < candidateScreencodes.length; charIndex++) {
           const ch = candidateScreencodes[charIndex];
           const mixIndex = binaryMixIndex(context.refSetCount[ch], bg, fg);
-          const total = hammingDistances[ch] + scoringTables.pairAdjustment[mixIndex];
+          let total = hammingDistances[ch] + scoringTables.pairAdjustment[mixIndex];
+
+          // TRUSKI3000: Add extra penalty for mismatches at edge pixels
+          if (hasEdges) {
+            const mismatchLo = (context.packedBinaryGlyphLo[ch] ^ thresholdLo) >>> 0;
+            const mismatchHi = (context.packedBinaryGlyphHi[ch] ^ thresholdHi) >>> 0;
+            const edgeMismatches =
+              popcount32((mismatchLo & eMaskLo) >>> 0) +
+              popcount32((mismatchHi & eMaskHi) >>> 0);
+            total += edgeWeight * edgeMismatches;
+          }
+
           if (pool.length < poolSize || total < pool[pool.length - 1].baseError) {
             insertTopCandidate(
               pool,
@@ -2575,6 +2662,10 @@ function buildBinaryCandidatePoolsForCellByBackground(
   }
 
   const setErrMatrix = computeBinarySetErrMatrix(cell, context, scoringKernel);
+  const edgeWeightSetErr = EDGE_MISMATCH_WEIGHT * cell.detailScore;
+  const hasEdgesSetErr = cell.edgePixelCount > 0 && edgeWeightSetErr > 0.01;
+  const eMaskLoSetErr = cell.edgeMaskLo;
+  const eMaskHiSetErr = cell.edgeMaskHi;
 
   for (let charIndex = 0; charIndex < candidateScreencodes.length; charIndex++) {
     const ch = candidateScreencodes[charIndex];
@@ -2593,11 +2684,22 @@ function buildBinaryCandidatePoolsForCellByBackground(
       for (let fgIndex = 0; fgIndex < foregrounds.length; fgIndex++) {
         const fg = foregrounds[fgIndex];
         const mixIndex = binaryMixIndex(nSet, bg, fg);
-        const total =
+        let total =
           bgErr +
           setErrMatrix[setErrBase + fg] +
           csfPenalty +
           scoringTables.pairAdjustment[mixIndex];
+
+        // TRUSKI3000: Edge-weighted penalty for set-error path
+        if (hasEdgesSetErr) {
+          const [tLo, tHi] = packBinaryThresholdMap(cell.weightedPixelErrors, fg, bg);
+          const mLo = (context.packedBinaryGlyphLo[ch] ^ tLo) >>> 0;
+          const mHi = (context.packedBinaryGlyphHi[ch] ^ tHi) >>> 0;
+          const edgeMismatches =
+            popcount32((mLo & eMaskLoSetErr) >>> 0) +
+            popcount32((mHi & eMaskHiSetErr) >>> 0);
+          total += edgeWeightSetErr * edgeMismatches;
+        }
         if (pool.length < poolSize || total < pool[pool.length - 1].baseError) {
           insertTopCandidate(
             pool,
@@ -3597,6 +3699,36 @@ function computeMeanDeltaEForPreview(
   };
 }
 
+function computeIdealColorPair(cell: SourceCellData): { c1: number; c2: number; error: number } {
+  // Find the pair of palette colors that minimizes total per-pixel error.
+  // For each pixel, assign it to whichever of the two colors has lower error.
+  let bestC1 = 0, bestC2 = 1, bestError = Infinity;
+  for (let c1 = 0; c1 < 16; c1++) {
+    for (let c2 = c1 + 1; c2 < 16; c2++) {
+      let totalErr = 0;
+      for (let p = 0; p < PIXELS_PER_CELL; p++) {
+        const base = p * 16;
+        totalErr += Math.min(cell.weightedPixelErrors[base + c1], cell.weightedPixelErrors[base + c2]);
+      }
+      if (totalErr < bestError) {
+        bestError = totalErr;
+        bestC1 = c1;
+        bestC2 = c2;
+      }
+    }
+  }
+  return { c1: bestC1, c2: bestC2, error: bestError };
+}
+
+function computeChosenPairError(cell: SourceCellData, bg: number, fg: number): number {
+  let totalErr = 0;
+  for (let p = 0; p < PIXELS_PER_CELL; p++) {
+    const base = p * 16;
+    totalErr += Math.min(cell.weightedPixelErrors[base + bg], cell.weightedPixelErrors[base + fg]);
+  }
+  return totalErr;
+}
+
 function buildCellMetadata(
   conversion: ConversionResult,
   analysis: SourceAnalysis,
@@ -3611,6 +3743,7 @@ function buildCellMetadata(
       errorScore: qualityMetric.perCellDeltaE[cellIndex],
       detailScore: cell.detailScore,
       saliencyWeight: cell.saliencyWeight,
+      screencode: conversion.screencodes[cellIndex],
     };
 
     if (conversion.mode === 'ecm') {
@@ -3622,6 +3755,13 @@ function buildCellMetadata(
       cellMetadata.bgColor = conversion.backgroundColor;
       cellMetadata.mcmCellIsHires = !mcmIsMulticolorCell(conversion.colors[cellIndex]);
     }
+
+    // Color diagnostics: ideal vs chosen
+    const ideal = computeIdealColorPair(cell);
+    cellMetadata.idealColor1 = ideal.c1;
+    cellMetadata.idealColor2 = ideal.c2;
+    cellMetadata.idealError = ideal.error;
+    cellMetadata.chosenError = computeChosenPairError(cell, bgColor, fgColor);
 
     return cellMetadata;
   });
