@@ -1176,6 +1176,25 @@ function buildBinaryCandidatePoolsForCell(
   const hasEdges = cell.edgePixelCount > 0 && edgeWeight > 0.01;
   const eMaskLo = cell.edgeMaskLo;
   const eMaskHi = cell.edgeMaskHi;
+  const thresholdLoByPair = hasEdges ? new Uint32Array(16 * 16) : null;
+  const thresholdHiByPair = hasEdges ? new Uint32Array(16 * 16) : null;
+  const thresholdMaskReady = hasEdges ? new Uint8Array(16 * 16) : null;
+
+  function getThresholdMask(fg: number, bg: number): [number, number] {
+    if (!hasEdges || !thresholdLoByPair || !thresholdHiByPair || !thresholdMaskReady) {
+      return [0, 0];
+    }
+
+    const pairIndex = fg * 16 + bg;
+    if (!thresholdMaskReady[pairIndex]) {
+      const [thresholdLo, thresholdHi] = packBinaryThresholdMap(cell.weightedPixelErrors, fg, bg);
+      thresholdLoByPair[pairIndex] = thresholdLo;
+      thresholdHiByPair[pairIndex] = thresholdHi;
+      thresholdMaskReady[pairIndex] = 1;
+    }
+
+    return [thresholdLoByPair[pairIndex] ?? 0, thresholdHiByPair[pairIndex] ?? 0];
+  }
 
   if (canUseBinaryHammingPath(settings, scoringKernel)) {
     const scoringTables = buildBinaryCellScoringTables(cell, context, metrics, settings, csfPenaltyByChar);
@@ -1189,7 +1208,7 @@ function buildBinaryCandidatePoolsForCell(
 
         let thresholdLo = 0, thresholdHi = 0;
         if (hasEdges) {
-          [thresholdLo, thresholdHi] = packBinaryThresholdMap(cell.weightedPixelErrors, fg, bg);
+          [thresholdLo, thresholdHi] = getThresholdMask(fg, bg);
         }
 
         for (let charIndex = 0; charIndex < candidateScreencodes.length; charIndex++) {
@@ -1335,7 +1354,7 @@ function buildBinaryCandidatePoolsForCell(
 
           // TRUSKI3000: Edge-weighted penalty for set-error path
           if (hasEdges) {
-            const [tLo, tHi] = packBinaryThresholdMap(cell.weightedPixelErrors, fg, bg);
+            const [tLo, tHi] = getThresholdMask(fg, bg);
             const mLo = (context.packedBinaryGlyphLo[ch] ^ tLo) >>> 0;
             const mHi = (context.packedBinaryGlyphHi[ch] ^ tHi) >>> 0;
             const edgeMismatches =
@@ -1423,7 +1442,7 @@ function buildBinaryCandidatePoolsForCell(
           pairAdjustment;
 
         if (hasEdges) {
-          const [tLo, tHi] = packBinaryThresholdMap(cell.weightedPixelErrors, fg, bg);
+          const [tLo, tHi] = getThresholdMask(fg, bg);
           const mLo = (context.packedBinaryGlyphLo[ch] ^ tLo) >>> 0;
           const mHi = (context.packedBinaryGlyphHi[ch] ^ tHi) >>> 0;
           const edgeMismatches =
