@@ -4,13 +4,13 @@
 
 TRUSKI3000 converts any source image into authentic Commodore 64 PETSCII graphics across all three VIC-II character modes — Standard, ECM (Extended Color Mode), and MCM (Multicolor Mode). The goal is not mathematical correctness in the abstract — it's the most perceptually accurate representation of any source image within the real-world constraints of VIC-II hardware. That means factoring in the chip's actual color output (measured, not nominal), the uneven perceptual spacing of the C64's 16-color palette, how human vision processes contrast and color at different spatial frequencies, where the eye actually looks in an image, and the hard memory and mode limitations the hardware enforces per cell. The output is correct screen RAM and color RAM, ready to load on real iron or emulator.
 
-Under the hood, TRUSKI3000 works the way human vision works. All color matching happens in OKLAB perceptual color space, glyph selection is weighted by a contrast sensitivity function that accounts for how the eye reads detail versus texture at different spatial frequencies, and a saliency map ensures the engine spends its error budget where it matters most — faces, edges, focal points — not flat backgrounds. The whole thing is framed as a constrained combinatorial optimization problem, executed in a WASM core fast enough to make expensive global refinement passes tractable on modern hardware.
+Under the hood, TRUSKI3000 works the way human vision works. All color matching happens in OKLAB perceptual color space, glyph selection is weighted by a contrast sensitivity function that accounts for how the eye reads detail versus texture at different spatial frequencies, and a saliency map ensures the engine spends its error budget where it matters most — faces, edges, focal points — not flat backgrounds. The whole thing is framed as a constrained combinatorial optimization problem, with the long-term performance target being a WASM-first core fast enough to make expensive global refinement passes tractable on modern hardware.
 
 ### Pipeline at a Glance
 
 1. **Preprocessing** — Source image is converted to OKLAB color space and divided into 8×8 cell regions. Per-cell statistics are computed: mean luminance, variance, gradient direction, detail score (via Laplacian), and a perceptual saliency mask that tells the engine where the eye will look hardest.
 
-2. **CODEX: Global Legal Mode Selection** — The full pipeline (stages 3-6) is executed independently for each enabled VIC-II mode. The converter then compares the solved results and selects whichever single full-screen mode minimises the combined color and detail error. CODEX: The target is standard C64 PETSCII with no raster tricks, so cross-mode mixing is out of scope for final export.
+2. **CODEX: Selected Legal Mode Setup** — The converter executes the explicitly requested VIC-II mode as one legal full-screen PETSCII output. Standard, ECM, and MCM are alternative full-screen solves; cross-mode mixing is out of scope for final export. CODEX: If a caller explicitly asks for multiple modes, they are rendered independently rather than auto-ranked or auto-selected.
 
 3. **Palette Solving** — Colodore's measured C64 palette is loaded and converted to OKLAB (Colodore models the full PAL analog signal chain including VIC-II luma levels, making it the most accurate reference available; Pepto's palette is supported as a fallback). For ECM, the four global background registers are solved via weighted k-means driven by the saliency map. For MCM, the shared color register is solved similarly. A full 16×16 perceptual distance lookup table is precomputed for use throughout matching.
 
@@ -63,11 +63,11 @@ The 2bpp encoding means each pair of bits in the glyph bitmap selects one of the
 
 CODEX: Within a legal MCM screen, per-cell hires-versus-multicolor behavior is still a valid standard C64 technique: when the screen is globally in MCM and bit 3 of color RAM is clear for a cell, the VIC-II renders that cell in hires mode (2 colors, full 8x8 resolution) even though the screen remains an MCM screen. CODEX: The tradeoff is that hires-like MCM cells keep full horizontal resolution but their foreground color is restricted to palette entries 0-7 because only color RAM bits 0-2 are available. This is not cross-mode mixing; it is part of how MCM works.
 
-### Why Mode Selection Matters for Conversion
+### Why Mode Choice Matters for Conversion
 
 CODEX: No single mode is optimal for all images. A portrait might score best in MCM because color richness matters more than fine detail. A line-art drawing might score best in Standard mode. A landscape with a few dominant background tones might score best in ECM.
 
-CODEX: TRUSKI3000 treats mode selection as a full-screen optimization decision for a legal PETSCII screen. The editor may compare multiple legal mode candidates, but any final standard C64 PETSCII export remains one global mode.
+CODEX: TRUSKI3000 treats Standard, ECM, and MCM as alternative legal full-screen outputs. The user chooses which mode to render. If the editor wants to compare multiple modes, it must request and render those modes explicitly.
 
 ---
 
@@ -82,9 +82,9 @@ Before any character matching happens, the source bitmap goes through perceptual
 
 ---
 
-## 2. Mode Selection Layer
+## 2. Mode Support Layer
 
-CODEX: TRUSKI3000 treats the three modes as alternative full-screen legal outputs and makes the mode decision at screen scope, not as a mixed per-region palette.
+CODEX: TRUSKI3000 treats the three modes as alternative full-screen legal outputs and never mixes Standard/ECM/MCM within one final export.
 
 ### Standard Mode
 
@@ -106,9 +106,9 @@ CODEX: TRUSKI3000 treats the three modes as alternative full-screen legal output
 - Glyph atlas interpreted as 2bpp patterns, matched against 4×8 effective geometry
 - Best for colorful regions where detail matters less than color richness
 
-### Mode Assignment
+### User-Selected Mode Execution
 
-CODEX: The engine scores the complete image under each applicable mode and picks the legal full-screen output that minimises a weighted combination of color error and detail error given the saliency map. CODEX: Within a chosen MCM screen, legal per-cell hires-versus-multicolor behavior may still be evaluated as part of the solver, but Standard/ECM/MCM are not mixed inside one export.
+CODEX: The engine solves the legal full-screen mode the user explicitly requested. If multiple modes are requested for comparison, each mode is solved independently. CODEX: Within a chosen MCM screen, legal per-cell hires-versus-multicolor behavior may still be evaluated as part of the solver, but Standard/ECM/MCM are not mixed inside one export.
 
 ---
 

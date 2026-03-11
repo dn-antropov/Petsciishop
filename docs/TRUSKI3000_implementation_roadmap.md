@@ -74,19 +74,20 @@ Last updated: 2026-03-10
 | 5.2 | **Distance LUT in WASM linear memory** | ❌ Missing | `pairDiff` remains in JS Float64Array |
 | 5.3 | **Full WASM kernel buildout** | ⚠️ Partial | Only `computeSetErrs` ported to WASM (f32x4 SIMD). Currently **slower than JS** — needs profiling. Auto-detection falls back to JS when WASM is slower |
 
-**Status: WASM is not blocking quality work. JS path is fast enough for interactive use. WASM optimization is pure performance polish.**
+**Status: current WASM work is groundwork, not the end state. JS remains the practical reference path today, but the long-term performance target is a WASM-first engine.**
 
 ---
 
-## Phase 6 — Global Legal Mode Selection ❌ NOT STARTED
+## Phase 6 — WASM-First Engine Migration ❌ NOT STARTED
 
-The capstone: choosing and explaining the best single legal full-screen mode.
+The capstone: move the full conversion engine into WASM while keeping JavaScript as UI, orchestration, and result-plumbing only.
 
 | # | Feature | Status | Notes |
 |---|---------|--------|-------|
-| 6.1 | **Global legal mode selection** | ❌ Missing | Score Standard/ECM/MCM, auto-select best full-screen mode |
-| 6.2 | **Per-mode ranking + comparison output** | ❌ Missing | Expose total error per mode for UI explanation |
-| 6.3 | **Advanced saliency** | ❌ Missing | Edge energy + center bias beyond deviation-from-mean |
+| 6.1 | **Standard full solver core in WASM** | ❌ Missing | Coarse background ranking, candidate pool construction, screen solve passes, and refinement should run in WASM |
+| 6.2 | **ECM/MCM full solver cores in WASM** | ❌ Missing | ECM register solving, MCM triple solving, legal hires-within-MCM behavior, and final cell solves should run in WASM |
+| 6.3 | **Resident solver state in WASM memory** | ❌ Missing | Source planes, glyph metadata, distance LUTs, and working buffers should stay resident in linear memory across a conversion |
+| 6.4 | **Progress/result bridge + fallback reduction** | ❌ Missing | JS should receive compact progress updates and result buffers while the WASM path becomes the main engine implementation |
 
 ---
 
@@ -98,7 +99,7 @@ The capstone: choosing and explaining the best single legal full-screen mode.
 | 2. Foundation | ✅ Complete | Detail scores, gradient directions, full glyph atlas |
 | 3. Perceptual Scoring | ✅ ~90% | CSF, edge continuity, blend bonus, coverage extremity, wildcards. Missing: saliency in palette solve, ECM re-solve |
 | 4. Output & Measurement | ✅ Complete | Full quality metrics suite + cellSSIM + test harness + per-cell metadata export + 4:3 preview |
-| 5. WASM Performance | ⚠️ ~20% | Hamming path + WASM kernel exist but disabled/slower than JS |
-| 6. Global Mode Selection | ❌ 0% | Auto-select best mode, ranking output, advanced saliency |
+| 5. WASM Performance | ⚠️ ~20% | Hamming path + WASM kernel groundwork exist, but JS still wins on most workloads |
+| 6. WASM-First Migration | ❌ 0% | Move the full solver pipeline and resident state into WASM |
 
-**Current engine state: ~90% of spec implemented with all major perceptual features active. Quality tuning is ongoing. Remaining work is mode selection (Phase 6), WASM performance (Phase 5), and ECM/MCM quality polish.**
+**Current engine state: ~90% of spec implemented with all major perceptual features active. Remaining work is ECM/MCM quality polish plus the WASM endgame: finish Phase 5 groundwork and then move the full solver pipeline into WASM in Phase 6.**

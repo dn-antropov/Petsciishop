@@ -33,7 +33,7 @@ Last updated: 2026-03-10
 | ECM support | **DONE** | imageConverter.ts | 64-char subset, 4 background registers |
 | MCM support | **DONE** | imageConverter.ts | 2bpp 4×8, 4 colors per cell |
 | Legal per-cell hires-vs-multicolor within MCM | **DONE** | imageConverter.ts | Standard C64 behavior, not cross-mode mixing |
-| Global legal mode evaluation across Standard/ECM/MCM | **PARTIAL** | imageConverter.ts | Modes can be solved and compared, but no auto-select of best mode |
+| Automatic global legal mode evaluation across Standard/ECM/MCM | **NOT APPLICABLE** | — | Manual mode choice is authoritative. The engine may solve whichever mode the user explicitly requests, but no hidden cross-mode ranking is required |
 | Per-region Standard/ECM/MCM mixing | **NOT APPLICABLE** | — | Out of scope for standard C64 PETSCII without raster tricks |
 
 ---
@@ -114,7 +114,7 @@ Last updated: 2026-03-10
 | cellSSIM (cell-averaged SSIM) | **DONE** | imageConverterQualityMetrics.ts | Structural similarity at 40×25 cell grid (8×8 averaged) with 3×3 sliding window. Captures "looks right from viewing distance" |
 | Test harness | **DONE** | scripts/truski3000-harness/run.mjs | 5 commands: compare, record, benchmark, parity, validate. Visual comparison HTML, named snapshots, character utilization diagnostics, color pair gap analysis |
 | Correct C64 aspect ratio (4:3) | **DONE** | ImageConverterModal.module.css | Preview is displayed at a 4:3 presentation aspect in the converter UI |
-| Global mode auto-selection + ranking | **MISSING** | — | Modes solved independently, no auto-select or comparison output |
+| Global mode auto-selection + ranking | **NOT APPLICABLE** | — | Manual mode choice is authoritative; hidden cross-mode ranking is out of scope |
 | Per-cell metadata export | **DONE** | imageConverter.ts | `ConversionResult.cellMetadata` exports fg/bg, errorScore, detailScore, saliencyWeight, screencode, and MCM hires-vs-multicolor flagging |
 
 ---
@@ -174,16 +174,17 @@ All constants in `imageConverterStandardCore.ts`:
 10. **Wildcard admission for hires candidates** — MCM's hires path uses hard `hasMinimumContrast` gate. Port competitive wildcard system for the hires candidates within MCM.
 11. **Add MCM fixtures to harness manifest** — Need MCM-mode test scenarios for systematic comparison and tuning.
 
-### Phase 6 — Global Mode Selection
-12. **Global legal mode auto-selection** — Score Standard/ECM/MCM, choose best full-screen mode
-13. **Per-mode ranking + comparison output** — Expose total error per mode for UI
-14. **Advanced saliency** — Edge energy + center bias (beyond deviation-from-mean)
+### Phase 6 — WASM-First Engine Migration
+12. **Standard full solver core in WASM** — Move coarse background ranking, candidate scoring, screen solve passes, and refinement out of JS and into WASM
+13. **ECM/MCM full solver cores in WASM** — Move register/triple ranking, legal hires-within-MCM solving, and final cell assignment into WASM
+14. **Resident solver state in WASM memory** — Keep source planes, glyph metadata, pairDiff/LUT data, and working buffers resident in WASM instead of round-tripping per-cell state through JS
+15. **Progress/result bridge + JS fallback reduction** — JS should orchestrate workers/UI only, receiving compact progress events and result buffers from WASM while fallback JS solvers are reduced over time
 
-### Performance (Phase 5, low priority)
-15. **WASM kernel performance** — Current WASM is slower than JS; needs profiling and optimization
-16. **Distance LUT in WASM memory** — Move pairDiff to WASM linear memory for SIMD access
+### Performance (Phase 5 groundwork)
+16. **WASM kernel performance** — Current WASM is slower than JS; needs profiling and optimization
+17. **Distance LUT in WASM memory** — Move pairDiff to WASM linear memory for SIMD access
 
 ### Quality polish (ongoing)
-17. **Chroma preservation bonus** — Implemented but disabled (weight=0); needs tuning
-18. **Edge mismatch weighting** — Implemented but disabled (weight=0.0); needs color-selection fixes
-19. **Saliency weighting in palette solve** — Use saliency during register selection, not just matching
+18. **Chroma preservation bonus** — Implemented but disabled (weight=0); needs tuning
+19. **Edge mismatch weighting** — Implemented but disabled (weight=0.0); needs color-selection fixes
+20. **Saliency weighting in palette solve** — Use saliency during register selection, not just matching
