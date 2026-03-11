@@ -36,6 +36,7 @@ const BINARY_MIX_COUNT: i32 = (PIXEL_COUNT + 1) * COLOR_COUNT * COLOR_COUNT;
 const MAX_MCM_SAMPLE_COUNT: i32 = 64;
 const MAX_MCM_TRIPLE_COUNT: i32 = COLOR_COUNT * (COLOR_COUNT - 1) * (COLOR_COUNT - 2);
 const MAX_MCM_FINALIST_COUNT: i32 = 16;
+const MAX_MCM_POOL_SIZE: i32 = 16;
 
 // Per-pixel error table used by the MCM hires path:
 // [64 pixels][16 palette colors].
@@ -70,6 +71,11 @@ const packedMcmGlyphMasks3 = new Uint32Array(CHAR_COUNT);
 const outputSetErrs = new Float32Array(SET_ERR_COUNT);
 const outputBitPairErrs = new Float32Array(BIT_PAIR_ERR_COUNT);
 const outputHamming = new Uint8Array(CHAR_COUNT);
+const poolTotalErrByColor = new Float32Array(COLOR_COUNT);
+const poolTopChars = new Uint8Array(MAX_MCM_POOL_SIZE);
+const poolTopColorRams = new Uint8Array(MAX_MCM_POOL_SIZE);
+const poolTopVariants = new Uint8Array(MAX_MCM_POOL_SIZE);
+const poolTopScores = new Float64Array(MAX_MCM_POOL_SIZE);
 const rankSampleCellIndices = new Int32Array(MAX_MCM_SAMPLE_COUNT);
 const rankSampleAvgL = new Float64Array(MAX_MCM_SAMPLE_COUNT);
 const rankSampleDetailScores = new Float64Array(MAX_MCM_SAMPLE_COUNT);
@@ -112,6 +118,11 @@ export function getPackedMcmGlyphMasks3Ptr(): usize { return packedMcmGlyphMasks
 export function getOutputSetErrsPtr(): usize { return outputSetErrs.dataStart; }
 export function getOutputBitPairErrsPtr(): usize { return outputBitPairErrs.dataStart; }
 export function getOutputHammingPtr(): usize { return outputHamming.dataStart; }
+export function getPoolTotalErrByColorPtr(): usize { return poolTotalErrByColor.dataStart; }
+export function getPoolTopCharsPtr(): usize { return poolTopChars.dataStart; }
+export function getPoolTopColorRamsPtr(): usize { return poolTopColorRams.dataStart; }
+export function getPoolTopVariantsPtr(): usize { return poolTopVariants.dataStart; }
+export function getPoolTopScoresPtr(): usize { return poolTopScores.dataStart; }
 export function getRankSampleCellIndicesPtr(): usize { return rankSampleCellIndices.dataStart; }
 export function getRankSampleAvgLPtr(): usize { return rankSampleAvgL.dataStart; }
 export function getRankSampleDetailScoresPtr(): usize { return rankSampleDetailScores.dataStart; }
@@ -225,6 +236,73 @@ function binaryMixIndex(setCount: i32, bg: i32, fg: i32): i32 {
 
 function rankHasContrast(fg: i32, bg: i32): bool {
   return rankContrastMask[bg * 8 + fg] != 0;
+}
+
+function resetPoolTopScores(poolSize: i32): void {
+  for (let i: i32 = 0; i < poolSize; i++) {
+    poolTopChars[i] = 0;
+    poolTopColorRams[i] = 0;
+    poolTopVariants[i] = 0;
+    poolTopScores[i] = Infinity;
+  }
+}
+
+function shiftPoolSlot(dst: i32, src: i32): void {
+  poolTopChars[dst] = poolTopChars[src];
+  poolTopColorRams[dst] = poolTopColorRams[src];
+  poolTopVariants[dst] = poolTopVariants[src];
+  poolTopScores[dst] = poolTopScores[src];
+}
+
+function insertPoolCandidate(
+  ch: i32,
+  colorRam: i32,
+  variant: i32,
+  score: f64,
+  poolSize: i32,
+  selectedCount: i32
+): i32 {
+  let nextCount = selectedCount;
+  let existing = -1;
+  for (let i: i32 = 0; i < selectedCount; i++) {
+    if (
+      <i32>poolTopChars[i] == ch &&
+      <i32>poolTopColorRams[i] == colorRam &&
+      <i32>poolTopVariants[i] == variant
+    ) {
+      existing = i;
+      break;
+    }
+  }
+
+  if (existing >= 0) {
+    if (score >= poolTopScores[existing]) {
+      return selectedCount;
+    }
+    for (let i: i32 = existing; i < selectedCount - 1; i++) {
+      shiftPoolSlot(i, i + 1);
+    }
+    nextCount--;
+  } else if (selectedCount >= poolSize && score >= poolTopScores[poolSize - 1]) {
+    return selectedCount;
+  }
+
+  let insertAt = nextCount < poolSize ? nextCount : poolSize - 1;
+  while (insertAt > 0 && score < poolTopScores[insertAt - 1]) {
+    if (insertAt < poolSize) {
+      shiftPoolSlot(insertAt, insertAt - 1);
+    }
+    insertAt--;
+  }
+
+  poolTopChars[insertAt] = <u8>ch;
+  poolTopColorRams[insertAt] = <u8>colorRam;
+  poolTopVariants[insertAt] = <u8>variant;
+  poolTopScores[insertAt] = score;
+  if (nextCount < poolSize) {
+    nextCount++;
+  }
+  return nextCount;
 }
 
 function computeBestHiresCostByBackgroundForSample(
@@ -419,6 +497,89 @@ export function rankModeTriples(
           selectedCount++;
         }
         tripleIndex++;
+      }
+    }
+  }
+
+  return selectedCount;
+}
+
+export function computeModeCandidatePool(
+  cellIndex: i32,
+  candidateCount: i32,
+  poolSize: i32,
+  bg: i32,
+  mc1: i32,
+  mc2: i32,
+  avgL: f64,
+  detailScore: f64,
+  lumMatchWeight: f64,
+  csfWeight: f64
+): i32 {
+  const clampedCandidateCount = candidateCount > CHAR_COUNT ? CHAR_COUNT : candidateCount;
+  const clampedPoolSize = poolSize > MAX_MCM_POOL_SIZE ? MAX_MCM_POOL_SIZE : poolSize;
+  if (clampedCandidateCount <= 0 || clampedPoolSize <= 0) {
+    return 0;
+  }
+
+  const pixelBasePtr = modeWeightedPixelErrors.dataStart + (<usize>(cellIndex * PIXEL_COUNT * COLOR_COUNT) << 2);
+  const pairBasePtr = modeWeightedPairErrors.dataStart + (<usize>(cellIndex * PAIR_COUNT * COLOR_COUNT) << 2);
+  computeMatricesFromBase(pixelBasePtr, pairBasePtr);
+
+  const detailSlack = 1.0 - detailScore;
+  const safeDetailSlack = detailSlack > 0.0 ? detailSlack : 0.0;
+  let selectedCount: i32 = 0;
+  resetPoolTopScores(clampedPoolSize);
+
+  for (let candidateIndex: i32 = 0; candidateIndex < clampedCandidateCount; candidateIndex++) {
+    const ch = <i32>rankCandidateScreencodes[candidateIndex];
+    const csfPenalty = csfWeight > 0.0
+      ? csfWeight * <f64>rankGlyphSpatialFrequency[ch] * safeDetailSlack
+      : 0.0;
+    const hiresBase = ch << 4;
+    const bgErr = <f64>poolTotalErrByColor[bg] - <f64>outputSetErrs[hiresBase + bg];
+
+    if (selectedCount < clampedPoolSize || bgErr < poolTopScores[clampedPoolSize - 1]) {
+      const nSet = rankRefSetCount[ch];
+      for (let fg: i32 = 0; fg < 8; fg++) {
+        if (!rankHasContrast(fg, bg)) continue;
+        const mixIndex = binaryMixIndex(nSet, bg, fg);
+        const lumDiff = avgL - rankBinaryMixL[mixIndex];
+        const total =
+          bgErr +
+          <f64>outputSetErrs[hiresBase + fg] +
+          csfPenalty +
+          lumMatchWeight * lumDiff * lumDiff;
+        selectedCount = insertPoolCandidate(ch, fg, 0, total, clampedPoolSize, selectedCount);
+      }
+    }
+
+    const bpBase = ch * 64;
+    const fixedErr =
+      <f64>outputBitPairErrs[bpBase + bg] +
+      <f64>outputBitPairErrs[bpBase + 16 + mc1] +
+      <f64>outputBitPairErrs[bpBase + 32 + mc2];
+
+    if (selectedCount < clampedPoolSize || 2.0 * fixedErr < poolTopScores[clampedPoolSize - 1]) {
+      const countsBase = ch * 4;
+      const count0 = <f64>rankRefMcmBpCounts[countsBase];
+      const count1 = <f64>rankRefMcmBpCounts[countsBase + 1];
+      const count2 = <f64>rankRefMcmBpCounts[countsBase + 2];
+      const count3 = <i32>rankRefMcmBpCounts[countsBase + 3];
+      const fixedL =
+        count0 * rankPaletteL[bg] +
+        count1 * rankPaletteL[mc1] +
+        count2 * rankPaletteL[mc2];
+      const bp3Base = bpBase + 48;
+
+      for (let fg: i32 = 0; fg < 8; fg++) {
+        if (count3 > 0 && !rankHasContrast(fg, bg)) continue;
+        const lumDiff = avgL - ((fixedL + <f64>count3 * rankPaletteL[fg]) / <f64>PAIR_COUNT);
+        const total =
+          2.0 * (<f64>fixedErr + <f64>outputBitPairErrs[bp3Base + fg]) +
+          lumMatchWeight * lumDiff * lumDiff +
+          csfPenalty;
+        selectedCount = insertPoolCandidate(ch, fg | 8, 1, total, clampedPoolSize, selectedCount);
       }
     }
   }

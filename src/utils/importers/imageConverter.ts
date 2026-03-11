@@ -1701,6 +1701,27 @@ export interface McmCandidateScoringKernel {
     pairDiff: Float64Array,
     context: Pick<CharsetConversionContext, 'packedMcmGlyphMasks'>
   ): Uint8Array;
+  computeModeCandidatePool?(
+    cellIndex: number,
+    cell: Pick<SourceCellData, 'totalErrByColor' | 'avgL' | 'detailScore'>,
+    candidateScreencodes: Uint16Array,
+    bg: number,
+    mc1: number,
+    mc2: number,
+    poolSize: number,
+    metrics: Pick<PaletteMetricData, 'pairDiff' | 'binaryMixL' | 'pL' | 'maxPairDiff'>,
+    context: Pick<CharsetConversionContext, 'flatPositions' | 'positionOffsets' | 'flatMcmPositions' | 'mcmPositionOffsets' | 'refSetCount' | 'refMcmBpCount' | 'glyphAtlas'>,
+    settings: {
+      lumMatchWeight: number;
+      csfWeight: number;
+    }
+  ): {
+    count: number;
+    chars: Uint8Array;
+    colorRams: Uint8Array;
+    variants: Uint8Array;
+    scores: Float64Array;
+  };
   rankModeTriples?(
     cells: ArrayLike<Pick<SourceCellData, 'totalErrByColor' | 'avgL' | 'detailScore' | 'saliencyWeight'>>,
     sampleIndices: ArrayLike<number>,
@@ -2635,6 +2656,106 @@ function buildMcmCandidatePool(
   }
 
   if (pool.length > 0) return pool;
+  const fallbackFg = bg === 0 ? 1 : 0;
+  return [makeBinaryCandidate(
+    context.ref[32],
+    32,
+    bg,
+    fallbackFg,
+    context.glyphAtlas.dominantDirection[32] as CellGradientDirection,
+    Infinity,
+    0,
+    metrics.pairDiff,
+    metrics.maxPairDiff
+  )];
+}
+
+function buildMcmCandidatePoolWithKernel(
+  cell: SourceCellData,
+  cellIndex: number,
+  context: CharsetConversionContext,
+  metrics: PaletteMetricData,
+  settings: ConverterSettings,
+  candidateScreencodes: Uint16Array,
+  bg: number,
+  mc1: number,
+  mc2: number,
+  poolSize: number,
+  scoringKernel: McmCandidateScoringKernel
+): ScreenCandidate[] {
+  if (!scoringKernel.computeModeCandidatePool || !context.refMcm || !context.refMcmBpCount) {
+    throw new Error('Missing MCM WASM candidate-pool support.');
+  }
+
+  const wasmPool = scoringKernel.computeModeCandidatePool(
+    cellIndex,
+    cell,
+    candidateScreencodes,
+    bg,
+    mc1,
+    mc2,
+    poolSize,
+    metrics,
+    context,
+    {
+      lumMatchWeight: settings.lumMatchWeight,
+      csfWeight: settings.csfWeight,
+    }
+  );
+
+  const pool: ScreenCandidate[] = [];
+  for (let slot = 0; slot < wasmPool.count; slot++) {
+    const ch = wasmPool.chars[slot] ?? 0;
+    const colorRam = wasmPool.colorRams[slot] ?? 0;
+    const baseError = wasmPool.scores[slot] ?? Infinity;
+    if ((wasmPool.variants[slot] ?? 0) === 0) {
+      const fg = colorRam;
+      const mixIndex = binaryMixIndex(context.refSetCount[ch], bg, fg);
+      const brightnessResidual = cell.avgL - metrics.binaryMixL[mixIndex];
+      pool.push(
+        makeBinaryCandidate(
+          context.ref[ch],
+          ch,
+          bg,
+          fg,
+          context.glyphAtlas.dominantDirection[ch] as CellGradientDirection,
+          baseError,
+          brightnessResidual,
+          metrics.pairDiff,
+          metrics.maxPairDiff
+        )
+      );
+      continue;
+    }
+
+    const counts = context.refMcmBpCount[ch];
+    const fg = mcmForegroundColor(colorRam);
+    const renderedAvgL =
+      (counts[0] * metrics.pL[bg] +
+       counts[1] * metrics.pL[mc1] +
+       counts[2] * metrics.pL[mc2] +
+       counts[3] * metrics.pL[fg]) / MCM_PIXELS_PER_CELL;
+    pool.push(
+      makeMcmCandidate(
+        context.refMcm[ch],
+        ch,
+        colorRam,
+        bg,
+        mc1,
+        mc2,
+        context.glyphAtlas.dominantDirection[ch] as CellGradientDirection,
+        baseError,
+        cell.avgL - renderedAvgL,
+        metrics.pairDiff,
+        metrics.maxPairDiff
+      )
+    );
+  }
+
+  if (pool.length > 0) {
+    return pool;
+  }
+
   const fallbackFg = bg === 0 ? 1 : 0;
   return [makeBinaryCandidate(
     context.ref[32],
@@ -3729,6 +3850,41 @@ async function buildMcmCandidatePools(
   return candidatePools;
 }
 
+async function buildMcmCandidatePoolsWithKernel(
+  cells: SourceCellData[],
+  context: CharsetConversionContext,
+  metrics: PaletteMetricData,
+  settings: ConverterSettings,
+  candidateScreencodes: Uint16Array,
+  bg: number,
+  mc1: number,
+  mc2: number,
+  poolSize: number,
+  scoringKernel: McmCandidateScoringKernel,
+  shouldCancel?: () => boolean
+): Promise<ScreenCandidate[][]> {
+  const candidatePools = new Array<ScreenCandidate[]>(cells.length);
+  for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
+    candidatePools[cellIndex] = buildMcmCandidatePoolWithKernel(
+      cells[cellIndex],
+      cellIndex,
+      context,
+      metrics,
+      settings,
+      candidateScreencodes,
+      bg,
+      mc1,
+      mc2,
+      poolSize,
+      scoringKernel
+    );
+    if ((cellIndex & 127) === 0) {
+      await yieldToUI(shouldCancel);
+    }
+  }
+  return candidatePools;
+}
+
 async function buildMcmCandidatePoolsDirect(
   cells: SourceCellData[],
   context: CharsetConversionContext,
@@ -4399,7 +4555,8 @@ async function solveMcmForCombo(
     );
   }
   const tGlobals1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-  const cellStates = ENABLE_MCM_CELL_STATE_REUSE
+  const useWasmMcmCandidatePools = Boolean(scoringKernel?.computeModeCandidatePool);
+  const cellStates = !useWasmMcmCandidatePools && ENABLE_MCM_CELL_STATE_REUSE
     ? await buildMcmCellScoringStates(
         analysis.cells,
         context,
@@ -4422,7 +4579,21 @@ async function solveMcmForCombo(
     await yieldToUI(shouldCancel);
 
     const tPool0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    const candidatePools = cellStates
+    const candidatePools = useWasmMcmCandidatePools
+      ? await buildMcmCandidatePoolsWithKernel(
+          analysis.cells,
+          context,
+          metrics,
+          settings,
+          candidateScreencodes,
+          bg,
+          mc1,
+          mc2,
+          MCM_POOL_SIZE,
+          scoringKernel!,
+          shouldCancel
+        )
+      : cellStates
       ? await buildMcmCandidatePools(
           analysis.cells,
           cellStates,

@@ -43,6 +43,11 @@ type McmKernelExports = {
   getOutputSetErrsPtr(): number;
   getOutputBitPairErrsPtr(): number;
   getOutputHammingPtr(): number;
+  getPoolTotalErrByColorPtr(): number;
+  getPoolTopCharsPtr(): number;
+  getPoolTopColorRamsPtr(): number;
+  getPoolTopVariantsPtr(): number;
+  getPoolTopScoresPtr(): number;
   getRankSampleCellIndicesPtr(): number;
   getRankSampleAvgLPtr(): number;
   getRankSampleDetailScoresPtr(): number;
@@ -69,6 +74,18 @@ type McmKernelExports = {
     lumMatchWeight: number,
     csfWeight: number,
     manualBgColor: number
+  ): number;
+  computeModeCandidatePool(
+    cellIndex: number,
+    candidateCount: number,
+    poolSize: number,
+    bg: number,
+    mc1: number,
+    mc2: number,
+    avgL: number,
+    detailScore: number,
+    lumMatchWeight: number,
+    csfWeight: number
   ): number;
 };
 
@@ -134,6 +151,11 @@ export class McmWasmKernel {
   private modeWeightedPairErrorsView: Float32Array;
   private pairDiffView: Float32Array;
   private thresholdMasksView: Uint32Array;
+  private poolTotalErrByColorView: Float32Array;
+  private poolTopCharsView: Uint8Array;
+  private poolTopColorRamsView: Uint8Array;
+  private poolTopVariantsView: Uint8Array;
+  private poolTopScoresView: Float64Array;
   private rankSampleCellIndicesView: Int32Array;
   private rankSampleAvgLView: Float64Array;
   private rankSampleDetailScoresView: Float64Array;
@@ -173,6 +195,11 @@ export class McmWasmKernel {
     this.modeWeightedPairErrorsView = new Float32Array(exports.memory.buffer, exports.getModeWeightedPairErrorsPtr(), 40 * 25 * 32 * 16);
     this.pairDiffView = new Float32Array(exports.memory.buffer, exports.getPairDiffPtr(), 16 * 16);
     this.thresholdMasksView = new Uint32Array(exports.memory.buffer, exports.getThresholdMasksPtr(), 4);
+    this.poolTotalErrByColorView = new Float32Array(exports.memory.buffer, exports.getPoolTotalErrByColorPtr(), 16);
+    this.poolTopCharsView = new Uint8Array(exports.memory.buffer, exports.getPoolTopCharsPtr(), 16);
+    this.poolTopColorRamsView = new Uint8Array(exports.memory.buffer, exports.getPoolTopColorRamsPtr(), 16);
+    this.poolTopVariantsView = new Uint8Array(exports.memory.buffer, exports.getPoolTopVariantsPtr(), 16);
+    this.poolTopScoresView = new Float64Array(exports.memory.buffer, exports.getPoolTopScoresPtr(), 16);
     this.rankSampleCellIndicesView = new Int32Array(exports.memory.buffer, exports.getRankSampleCellIndicesPtr(), 64);
     this.rankSampleAvgLView = new Float64Array(exports.memory.buffer, exports.getRankSampleAvgLPtr(), 64);
     this.rankSampleDetailScoresView = new Float64Array(exports.memory.buffer, exports.getRankSampleDetailScoresPtr(), 64);
@@ -273,6 +300,64 @@ export class McmWasmKernel {
     this.thresholdMasksView.set(thresholdMasks);
     this.exports.computeHammingDistances();
     return this.outputHammingView;
+  }
+
+  computeModeCandidatePool(
+    cellIndex: number,
+    cell: {
+      totalErrByColor: Float32Array;
+      avgL: number;
+      detailScore: number;
+    },
+    candidateScreencodes: Uint16Array,
+    bg: number,
+    mc1: number,
+    mc2: number,
+    poolSize: number,
+    metrics: {
+      pairDiff: Float64Array;
+      binaryMixL: Float64Array;
+      pL: Float64Array;
+      maxPairDiff: number;
+    },
+    context: McmKernelContext,
+    settings: {
+      lumMatchWeight: number;
+      csfWeight: number;
+    }
+  ): {
+    count: number;
+    chars: Uint8Array;
+    colorRams: Uint8Array;
+    variants: Uint8Array;
+    scores: Float64Array;
+  } {
+    this.ensureContext(context);
+    this.ensurePairDiff(metrics.pairDiff);
+    this.ensureRankingMetrics(metrics);
+    this.rankCandidateScreencodesView.set(candidateScreencodes);
+    this.poolTotalErrByColorView.set(cell.totalErrByColor);
+
+    const count = this.exports.computeModeCandidatePool(
+      cellIndex,
+      candidateScreencodes.length,
+      Math.min(poolSize, 16),
+      bg,
+      mc1,
+      mc2,
+      cell.avgL,
+      cell.detailScore,
+      settings.lumMatchWeight,
+      settings.csfWeight
+    );
+
+    return {
+      count,
+      chars: this.poolTopCharsView.subarray(0, count),
+      colorRams: this.poolTopColorRamsView.subarray(0, count),
+      variants: this.poolTopVariantsView.subarray(0, count),
+      scores: this.poolTopScoresView.subarray(0, count),
+    };
   }
 
   rankModeTriples(

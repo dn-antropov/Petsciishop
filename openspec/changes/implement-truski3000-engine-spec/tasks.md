@@ -43,7 +43,7 @@
 - [x] 6.3 Keep conversion state resident in WASM memory — mode workers now preload source planes/LUT state per request and upload ECM/MCM cell error tables once per offset so kernels read resident cell buffers by `cellIndex` instead of per-cell JS copies
 - [ ] 6.4 Reduce JS to orchestration/UI responsibilities — progress events and compact result buffers come back from WASM while fallback JS solver paths are reduced over time
 - [x] 6.4a Port ECM candidate-pool construction/finalization into the binary WASM host path — ECM compact pools/finalization now stay on the WASM-first path, and the targeted `doggy.png` ECM parity canary passed after removing the mode-path wildcard admission mismatch
-- [ ] 6.4b Port MCM coarse triple ranking + candidate-pool construction into WASM — legal hires-vs-multicolor cell evaluation stays in the WASM-first search path
+- [x] 6.4b Port MCM coarse triple ranking + candidate-pool construction into WASM — legal hires-vs-multicolor cell evaluation now stays in the WASM-first search path, and the targeted `slayer_multi_color.png` MCM compare canary passed
 - [ ] 6.4c Bridge compact ECM/MCM progress checkpoints + result buffers through the worker boundary — JS consumes compact solve outputs instead of reconstructing intermediate screen state
 - [ ] 6.4d Reduce JS fallback paths to explicit unavailable/debug paths and validate milestone canaries before any default-path change
 
