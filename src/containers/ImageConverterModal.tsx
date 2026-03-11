@@ -55,6 +55,21 @@ function getBackendLabel(backend: ConverterAccelerationPath): string {
   return backend === 'wasm' ? 'WASM' : 'JS';
 }
 
+function getConversionFailureMessage(
+  error: unknown,
+  settings: ConverterSettings,
+  mode: PreviewMode | null
+): string {
+  const modeLabel = mode ? mode.toUpperCase() : 'Conversion';
+  if (settings.accelerationMode === 'wasm') {
+    return `${modeLabel} WASM conversion failed. Switch Backend to JS and retry.`;
+  }
+  if (error instanceof Error && error.message) {
+    return `${modeLabel} conversion failed: ${error.message}`;
+  }
+  return `${modeLabel} conversion failed. See console for details.`;
+}
+
 function sanitizeScreenName(name: string): string | undefined {
   const cleaned = name
     .normalize('NFKC')
@@ -629,6 +644,7 @@ export default function ImageConverterModal() {
           ...prev,
           [currentMode]: { startedAtMs: null, completedSeconds: null },
         }));
+        showToast(getConversionFailureMessage(err, s, currentMode), 4200);
       }
       console.error('Conversion failed:', err);
     } finally {
