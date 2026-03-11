@@ -83,6 +83,17 @@ type BinaryKernelExports = {
     maxPairDiff: number,
     candidateCount: number
   ): void;
+  computeModeBestByBackground(
+    cellIndex: number,
+    avgL: number,
+    avgA: number,
+    avgB: number,
+    detailScore: number,
+    lumMatchWeight: number,
+    csfWeight: number,
+    maxPairDiff: number,
+    candidateCount: number
+  ): void;
   computeStandardCandidatePools(
     avgL: number,
     avgA: number,
@@ -93,6 +104,27 @@ type BinaryKernelExports = {
     maxPairDiff: number,
     candidateCount: number,
     backgroundCount: number,
+    fgLimit: number,
+    minContrastRatio: number,
+    poolSize: number,
+    edgeMaskLo: number,
+    edgeMaskHi: number,
+    edgeWeight: number,
+    useCoveragePenalty: number
+  ): void;
+  computeModeCandidatePools(
+    cellIndex: number,
+    avgL: number,
+    avgA: number,
+    avgB: number,
+    detailScore: number,
+    lumMatchWeight: number,
+    csfWeight: number,
+    maxPairDiff: number,
+    candidateCount: number,
+    backgroundCount: number,
+    fgLimit: number,
+    minContrastRatio: number,
     poolSize: number,
     edgeMaskLo: number,
     edgeMaskHi: number,
@@ -148,6 +180,49 @@ export interface StandardCandidateScoringKernel {
       csfWeight: number;
     },
     backgrounds: number[],
+    poolSize: number,
+    edgeMaskLo: number,
+    edgeMaskHi: number,
+    edgeWeight: number,
+    candidateScreencodes: Uint16Array,
+    metrics: PaletteMetricData,
+    context: CharsetConversionContext
+  ): {
+    counts: Uint8Array;
+    chars: Uint8Array;
+    fgs: Uint8Array;
+    scores: Float64Array;
+    setErrs: Float32Array;
+  };
+  computeModeBestErrorByBackground?(
+    cellIndex: number,
+    totalErrByColor: Float32Array,
+    avgL: number,
+    avgA: number,
+    avgB: number,
+    detailScore: number,
+    settings: {
+      lumMatchWeight: number;
+      csfWeight: number;
+    },
+    candidateScreencodes: Uint16Array,
+    metrics: PaletteMetricData,
+    context: CharsetConversionContext
+  ): Float64Array;
+  computeModeCandidatePoolsByBackground?(
+    cellIndex: number,
+    totalErrByColor: Float32Array,
+    avgL: number,
+    avgA: number,
+    avgB: number,
+    detailScore: number,
+    settings: {
+      lumMatchWeight: number;
+      csfWeight: number;
+    },
+    backgrounds: number[],
+    fgLimit: number,
+    minContrastRatio: number,
     poolSize: number,
     edgeMaskLo: number,
     edgeMaskHi: number,
@@ -651,6 +726,39 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
     return this.outputBestByBgView;
   }
 
+  computeModeBestErrorByBackground(
+    cellIndex: number,
+    totalErrByColor: Float32Array,
+    avgL: number,
+    avgA: number,
+    avgB: number,
+    detailScore: number,
+    settings: {
+      lumMatchWeight: number;
+      csfWeight: number;
+    },
+    candidateScreencodes: Uint16Array,
+    metrics: PaletteMetricData,
+    context: CharsetConversionContext
+  ): Float64Array {
+    this.ensureContext(context);
+    this.ensureMetrics(metrics);
+    this.ensureCandidateScreencodes(candidateScreencodes);
+    this.standardTotalErrByColorView.set(totalErrByColor);
+    this.exports.computeModeBestByBackground(
+      cellIndex,
+      avgL,
+      avgA,
+      avgB,
+      detailScore,
+      settings.lumMatchWeight,
+      settings.csfWeight,
+      metrics.maxPairDiff,
+      candidateScreencodes.length
+    );
+    return Float64Array.from(this.outputBestByBgView);
+  }
+
   computeCandidatePoolsByBackground(
     weightedPixelErrors: Float32Array,
     totalErrByColor: Float32Array,
@@ -687,6 +795,63 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
       metrics.maxPairDiff,
       candidateScreencodes.length,
       backgrounds.length,
+      16,
+      0.16,
+      Math.min(poolSize, STANDARD_WASM_MAX_POOL_SIZE),
+      edgeMaskLo >>> 0,
+      edgeMaskHi >>> 0,
+      edgeWeight,
+      1
+    );
+    return {
+      counts: this.standardPoolCountsView.subarray(0, backgrounds.length),
+      chars: this.standardPoolCharsView.subarray(0, backgrounds.length * STANDARD_WASM_MAX_POOL_SIZE),
+      fgs: this.standardPoolFgsView.subarray(0, backgrounds.length * STANDARD_WASM_MAX_POOL_SIZE),
+      scores: this.standardPoolScoresView.subarray(0, backgrounds.length * STANDARD_WASM_MAX_POOL_SIZE),
+      setErrs: this.outputSetErrsView,
+    };
+  }
+
+  computeModeCandidatePoolsByBackground(
+    cellIndex: number,
+    totalErrByColor: Float32Array,
+    avgL: number,
+    avgA: number,
+    avgB: number,
+    detailScore: number,
+    settings: {
+      lumMatchWeight: number;
+      csfWeight: number;
+    },
+    backgrounds: number[],
+    fgLimit: number,
+    minContrastRatio: number,
+    poolSize: number,
+    edgeMaskLo: number,
+    edgeMaskHi: number,
+    edgeWeight: number,
+    candidateScreencodes: Uint16Array,
+    metrics: PaletteMetricData,
+    context: CharsetConversionContext
+  ) {
+    this.ensureContext(context);
+    this.ensureMetrics(metrics);
+    this.ensureCandidateScreencodes(candidateScreencodes);
+    this.ensureBackgrounds(backgrounds);
+    this.standardTotalErrByColorView.set(totalErrByColor);
+    this.exports.computeModeCandidatePools(
+      cellIndex,
+      avgL,
+      avgA,
+      avgB,
+      detailScore,
+      settings.lumMatchWeight,
+      settings.csfWeight,
+      metrics.maxPairDiff,
+      candidateScreencodes.length,
+      backgrounds.length,
+      fgLimit,
+      minContrastRatio,
       Math.min(poolSize, STANDARD_WASM_MAX_POOL_SIZE),
       edgeMaskLo >>> 0,
       edgeMaskHi >>> 0,

@@ -397,7 +397,73 @@ export function computeStandardBestByBackground(
   maxPairDiff: f64,
   candidateCount: i32
 ): void {
-  computeSetErrs();
+  computeBestByBackgroundForBase(
+    weightedPixelErrors.dataStart,
+    avgL,
+    avgA,
+    avgB,
+    detailScore,
+    lumMatchWeight,
+    csfWeight,
+    maxPairDiff,
+    candidateCount,
+    true,
+    COLOR_COUNT,
+    MIN_PAIR_DIFF_RATIO
+  );
+}
+
+export function computeModeBestByBackground(
+  cellIndex: i32,
+  avgL: f64,
+  avgA: f64,
+  avgB: f64,
+  detailScore: f64,
+  lumMatchWeight: f64,
+  csfWeight: f64,
+  maxPairDiff: f64,
+  candidateCount: i32
+): void {
+  computeBestByBackgroundForBase(
+    modeWeightedPixelErrors.dataStart + (<usize>(cellIndex * WEIGHTED_PIXEL_ERROR_COUNT) << 2),
+    avgL,
+    avgA,
+    avgB,
+    detailScore,
+    lumMatchWeight,
+    csfWeight,
+    maxPairDiff,
+    candidateCount,
+    false,
+    COLOR_COUNT,
+    MIN_PAIR_DIFF_RATIO
+  );
+}
+
+function computeHuePreservationBonus(
+  sourceA: f64,
+  sourceB: f64,
+  renderedA: f64,
+  renderedB: f64
+): f64 {
+  return 0.0;
+}
+
+function computeBestByBackgroundForBase(
+  weightedPixelErrorBasePtr: usize,
+  avgL: f64,
+  avgA: f64,
+  avgB: f64,
+  detailScore: f64,
+  lumMatchWeight: f64,
+  csfWeight: f64,
+  maxPairDiff: f64,
+  candidateCount: i32,
+  useCoveragePenalty: bool,
+  fgLimit: i32,
+  minContrastRatio: f64
+): void {
+  computeSetErrsFromBase(weightedPixelErrorBasePtr);
 
   for (let bg: i32 = 0; bg < COLOR_COUNT; bg++) {
     outputBestByBg[bg] = Infinity;
@@ -418,21 +484,33 @@ export function computeStandardBestByBackground(
       const bgErr = <f64>standardTotalErrByColor[bg] - <f64>outputSetErrs[rowBase + bg];
       if (bgErr >= outputBestByBg[bg]) continue;
 
-      const covPenalty = COVERAGE_EXTREMITY_WEIGHT * Math.abs(avgL - standardPaletteL[bg]) * extremity;
+      const covPenalty = useCoveragePenalty
+        ? COVERAGE_EXTREMITY_WEIGHT * Math.abs(avgL - standardPaletteL[bg]) * extremity
+        : 0.0;
       let best = outputBestByBg[bg];
 
-      for (let fg: i32 = 0; fg < COLOR_COUNT; fg++) {
+      for (let fg: i32 = 0; fg < fgLimit; fg++) {
         if (fg == bg) continue;
-        if (<f64>pairDiff[fg * COLOR_COUNT + bg] < maxPairDiff * MIN_PAIR_DIFF_RATIO) continue;
+        if (minContrastRatio > 0.0 && <f64>pairDiff[fg * COLOR_COUNT + bg] < maxPairDiff * minContrastRatio) continue;
 
         const mixIndex = ((nSet * COLOR_COUNT) + bg) * COLOR_COUNT + fg;
         const lumDiff = avgL - standardBinaryMixL[mixIndex];
-        const dL = lumDiff;
-        const dA = avgA - standardBinaryMixA[mixIndex];
-        const dB = avgB - standardBinaryMixB[mixIndex];
-        const blendError = dL * dL + dA * dA + dB * dB;
-        const blendQuality = 1.0 / (1.0 + blendError * BLEND_QUALITY_SHARPNESS);
-        const pairAdjustment = lumMatchWeight * lumDiff * lumDiff - BLEND_MATCH_WEIGHT * blendQuality;
+        let pairAdjustment = lumMatchWeight * lumDiff * lumDiff;
+        if (useCoveragePenalty) {
+          const dL = lumDiff;
+          const dA = avgA - standardBinaryMixA[mixIndex];
+          const dB = avgB - standardBinaryMixB[mixIndex];
+          const blendError = dL * dL + dA * dA + dB * dB;
+          const blendQuality = 1.0 / (1.0 + blendError * BLEND_QUALITY_SHARPNESS);
+          pairAdjustment -= BLEND_MATCH_WEIGHT * blendQuality;
+        } else {
+          pairAdjustment -= computeHuePreservationBonus(
+            avgA,
+            avgB,
+            standardBinaryMixA[mixIndex],
+            standardBinaryMixB[mixIndex]
+          );
+        }
         const total =
           bgErr +
           <f64>outputSetErrs[rowBase + fg] +
@@ -464,6 +542,32 @@ function packStandardThresholdHi(fg: i32, bg: i32): u32 {
   for (let pixel: i32 = 32; pixel < PIXEL_COUNT; pixel++) {
     const base = pixel << 4;
     if (weightedPixelErrors[base + fg] <= weightedPixelErrors[base + bg]) {
+      hi |= <u32>(1 << (pixel - 32));
+    }
+  }
+  return hi;
+}
+
+function packThresholdLoAt(weightedPixelErrorBasePtr: usize, fg: i32, bg: i32): u32 {
+  let lo: u32 = 0;
+  for (let pixel: i32 = 0; pixel < 32; pixel++) {
+    const baseOffset = (<usize>(pixel << 4) << 2);
+    const fgErr = load<f32>(weightedPixelErrorBasePtr + baseOffset + (<usize>fg << 2));
+    const bgErr = load<f32>(weightedPixelErrorBasePtr + baseOffset + (<usize>bg << 2));
+    if (fgErr <= bgErr) {
+      lo |= <u32>(1 << pixel);
+    }
+  }
+  return lo;
+}
+
+function packThresholdHiAt(weightedPixelErrorBasePtr: usize, fg: i32, bg: i32): u32 {
+  let hi: u32 = 0;
+  for (let pixel: i32 = 32; pixel < PIXEL_COUNT; pixel++) {
+    const baseOffset = (<usize>(pixel << 4) << 2);
+    const fgErr = load<f32>(weightedPixelErrorBasePtr + baseOffset + (<usize>fg << 2));
+    const bgErr = load<f32>(weightedPixelErrorBasePtr + baseOffset + (<usize>bg << 2));
+    if (fgErr <= bgErr) {
       hi |= <u32>(1 << (pixel - 32));
     }
   }
@@ -771,12 +875,95 @@ export function computeStandardCandidatePools(
   maxPairDiff: f64,
   candidateCount: i32,
   backgroundCount: i32,
+  fgLimit: i32,
+  minContrastRatio: f64,
+  poolSize: i32,
+  edgeMaskLo: u32,
+  edgeMaskHi: u32,
+  edgeWeight: f64,
+  useCoveragePenalty: bool
+): void {
+  computeCandidatePoolsForBase(
+    weightedPixelErrors.dataStart,
+    avgL,
+    avgA,
+    avgB,
+    detailScore,
+    lumMatchWeight,
+    csfWeight,
+    maxPairDiff,
+    candidateCount,
+    backgroundCount,
+    fgLimit,
+    minContrastRatio,
+    poolSize,
+    edgeMaskLo,
+    edgeMaskHi,
+    edgeWeight,
+    useCoveragePenalty
+  );
+}
+
+export function computeModeCandidatePools(
+  cellIndex: i32,
+  avgL: f64,
+  avgA: f64,
+  avgB: f64,
+  detailScore: f64,
+  lumMatchWeight: f64,
+  csfWeight: f64,
+  maxPairDiff: f64,
+  candidateCount: i32,
+  backgroundCount: i32,
+  fgLimit: i32,
+  minContrastRatio: f64,
   poolSize: i32,
   edgeMaskLo: u32,
   edgeMaskHi: u32,
   edgeWeight: f64
 ): void {
-  computeSetErrs();
+  const weightedPixelErrorBasePtr = modeWeightedPixelErrors.dataStart + (<usize>(cellIndex * WEIGHTED_PIXEL_ERROR_COUNT) << 2);
+  computeCandidatePoolsForBase(
+    weightedPixelErrorBasePtr,
+    avgL,
+    avgA,
+    avgB,
+    detailScore,
+    lumMatchWeight,
+    csfWeight,
+    maxPairDiff,
+    candidateCount,
+    backgroundCount,
+    fgLimit,
+    minContrastRatio,
+    poolSize,
+    edgeMaskLo,
+    edgeMaskHi,
+    edgeWeight,
+    false
+  );
+}
+
+function computeCandidatePoolsForBase(
+  weightedPixelErrorBasePtr: usize,
+  avgL: f64,
+  avgA: f64,
+  avgB: f64,
+  detailScore: f64,
+  lumMatchWeight: f64,
+  csfWeight: f64,
+  maxPairDiff: f64,
+  candidateCount: i32,
+  backgroundCount: i32,
+  fgLimit: i32,
+  minContrastRatio: f64,
+  poolSize: i32,
+  edgeMaskLo: u32,
+  edgeMaskHi: u32,
+  edgeWeight: f64,
+  useCoveragePenalty: bool
+): void {
+  computeSetErrsFromBase(weightedPixelErrorBasePtr);
 
   const clampedPoolSize = poolSize > MAX_STANDARD_POOL_SIZE ? MAX_STANDARD_POOL_SIZE : poolSize;
   resetStandardPools(backgroundCount, clampedPoolSize);
@@ -788,11 +975,12 @@ export function computeStandardCandidatePools(
   if (hasEdges) {
     for (let bi: i32 = 0; bi < backgroundCount; bi++) {
       const bg = <i32>standardBackgrounds[bi];
-      for (let fg: i32 = 0; fg < COLOR_COUNT; fg++) {
+      for (let fg: i32 = 0; fg < fgLimit; fg++) {
         if (fg == bg) continue;
+        if (minContrastRatio > 0.0 && <f64>pairDiff[fg * COLOR_COUNT + bg] < maxPairDiff * minContrastRatio) continue;
         const pairIndex = bg * COLOR_COUNT + fg;
-        standardThresholdLoScratch[pairIndex] = packStandardThresholdLo(fg, bg);
-        standardThresholdHiScratch[pairIndex] = packStandardThresholdHi(fg, bg);
+        standardThresholdLoScratch[pairIndex] = packThresholdLoAt(weightedPixelErrorBasePtr, fg, bg);
+        standardThresholdHiScratch[pairIndex] = packThresholdHiAt(weightedPixelErrorBasePtr, fg, bg);
       }
     }
   }
@@ -802,8 +990,11 @@ export function computeStandardCandidatePools(
     const rowBase = ch << 4;
     const nSet = standardRefSetCount[ch];
     const sf = <f64>standardGlyphSpatialFrequency[ch];
-    const csfPenalty = sf <= 0.1 && csfWeight > 0.0 ? csfWeight * sf * safeDetailSlack : 0.0;
-    const csfBase = sf > 0.1 && csfWeight > 0.0 ? csfWeight * sf * safeDetailSlack : 0.0;
+    const csfPenaltyFull = csfWeight > 0.0 ? csfWeight * sf * safeDetailSlack : 0.0;
+    const csfPenalty = useCoveragePenalty
+      ? (sf <= 0.1 ? csfPenaltyFull : 0.0)
+      : csfPenaltyFull;
+    const csfBase = useCoveragePenalty && sf > 0.1 ? csfPenaltyFull : 0.0;
 
     for (let bi: i32 = 0; bi < backgroundCount; bi++) {
       const bg = <i32>standardBackgrounds[bi];
@@ -813,18 +1004,29 @@ export function computeStandardCandidatePools(
       const bgErr = <f64>standardTotalErrByColor[bg] - <f64>outputSetErrs[rowBase + bg];
       if (bgErr >= worst) continue;
 
-      for (let fg: i32 = 0; fg < COLOR_COUNT; fg++) {
+      for (let fg: i32 = 0; fg < fgLimit; fg++) {
         if (fg == bg) continue;
-        if (<f64>pairDiff[fg * COLOR_COUNT + bg] < maxPairDiff * MIN_PAIR_DIFF_RATIO) continue;
+        if (minContrastRatio > 0.0 && <f64>pairDiff[fg * COLOR_COUNT + bg] < maxPairDiff * minContrastRatio) continue;
 
         const mixIndex = ((nSet * COLOR_COUNT) + bg) * COLOR_COUNT + fg;
         const lumDiff = avgL - standardBinaryMixL[mixIndex];
-        const dL = lumDiff;
-        const dA = avgA - standardBinaryMixA[mixIndex];
-        const dB = avgB - standardBinaryMixB[mixIndex];
-        const blendError = dL * dL + dA * dA + dB * dB;
-        const blendQuality = 1.0 / (1.0 + blendError * BLEND_QUALITY_SHARPNESS);
-        const pairAdjustment = lumMatchWeight * lumDiff * lumDiff - BLEND_MATCH_WEIGHT * blendQuality;
+        let blendQuality = 0.0;
+        let pairAdjustment = lumMatchWeight * lumDiff * lumDiff;
+        if (useCoveragePenalty) {
+          const dL = lumDiff;
+          const dA = avgA - standardBinaryMixA[mixIndex];
+          const dB = avgB - standardBinaryMixB[mixIndex];
+          const blendError = dL * dL + dA * dA + dB * dB;
+          blendQuality = 1.0 / (1.0 + blendError * BLEND_QUALITY_SHARPNESS);
+          pairAdjustment -= BLEND_MATCH_WEIGHT * blendQuality;
+        } else {
+          pairAdjustment -= computeHuePreservationBonus(
+            avgA,
+            avgB,
+            standardBinaryMixA[mixIndex],
+            standardBinaryMixB[mixIndex]
+          );
+        }
 
         let total =
           bgErr +
@@ -832,7 +1034,7 @@ export function computeStandardCandidatePools(
           csfPenalty +
           pairAdjustment;
 
-        if (csfBase > 0.0) {
+        if (useCoveragePenalty && csfBase > 0.0) {
           total += csfBase * (1.0 - BLEND_CSF_RELIEF * blendQuality);
         }
 
@@ -855,65 +1057,67 @@ export function computeStandardCandidatePools(
     }
   }
 
-  for (let bi: i32 = 0; bi < backgroundCount; bi++) {
-    const bg = <i32>standardBackgrounds[bi];
-    const poolBase = bi * MAX_STANDARD_POOL_SIZE;
-    const normalCount = <i32>standardPoolCounts[bi];
-    const bestNormal = normalCount > 0 ? standardPoolScores[poolBase] : Infinity;
-    const scoreThreshold = bestNormal * (1.0 + WILDCARD_SCORE_MARGIN);
-    let admitted = 0;
+  if (useCoveragePenalty) {
+    for (let bi: i32 = 0; bi < backgroundCount; bi++) {
+      const bg = <i32>standardBackgrounds[bi];
+      const poolBase = bi * MAX_STANDARD_POOL_SIZE;
+      const normalCount = <i32>standardPoolCounts[bi];
+      const bestNormal = normalCount > 0 ? standardPoolScores[poolBase] : Infinity;
+      const scoreThreshold = bestNormal * (1.0 + WILDCARD_SCORE_MARGIN);
+      let admitted = 0;
 
-    for (let fg: i32 = 0; fg < COLOR_COUNT && admitted < WILDCARD_MAX_ADMITTED; fg++) {
-      if (fg == bg) continue;
-      if (<f64>pairDiff[fg * COLOR_COUNT + bg] >= maxPairDiff * MIN_PAIR_DIFF_RATIO) continue;
+      for (let fg: i32 = 0; fg < COLOR_COUNT && admitted < WILDCARD_MAX_ADMITTED; fg++) {
+        if (fg == bg) continue;
+        if (<f64>pairDiff[fg * COLOR_COUNT + bg] >= maxPairDiff * MIN_PAIR_DIFF_RATIO) continue;
 
-      for (let candidateIndex: i32 = 0; candidateIndex < candidateCount && admitted < WILDCARD_MAX_ADMITTED; candidateIndex++) {
-        const ch = <i32>standardCandidateScreencodes[candidateIndex];
-        const rowBase = ch << 4;
-        const nSet = standardRefSetCount[ch];
-        const sf = <f64>standardGlyphSpatialFrequency[ch];
-        const csfPenalty = sf <= 0.1 && csfWeight > 0.0 ? csfWeight * sf * safeDetailSlack : 0.0;
-        const csfBase = sf > 0.1 && csfWeight > 0.0 ? csfWeight * sf * safeDetailSlack : 0.0;
-        const bgErr = <f64>standardTotalErrByColor[bg] - <f64>outputSetErrs[rowBase + bg];
-        if (bgErr >= scoreThreshold) continue;
+        for (let candidateIndex: i32 = 0; candidateIndex < candidateCount && admitted < WILDCARD_MAX_ADMITTED; candidateIndex++) {
+          const ch = <i32>standardCandidateScreencodes[candidateIndex];
+          const rowBase = ch << 4;
+          const nSet = standardRefSetCount[ch];
+          const sf = <f64>standardGlyphSpatialFrequency[ch];
+          const csfPenalty = sf <= 0.1 && csfWeight > 0.0 ? csfWeight * sf * safeDetailSlack : 0.0;
+          const csfBase = sf > 0.1 && csfWeight > 0.0 ? csfWeight * sf * safeDetailSlack : 0.0;
+          const bgErr = <f64>standardTotalErrByColor[bg] - <f64>outputSetErrs[rowBase + bg];
+          if (bgErr >= scoreThreshold) continue;
 
-        const mixIndex = ((nSet * COLOR_COUNT) + bg) * COLOR_COUNT + fg;
-        const lumDiff = avgL - standardBinaryMixL[mixIndex];
-        const dL = lumDiff;
-        const dA = avgA - standardBinaryMixA[mixIndex];
-        const dB = avgB - standardBinaryMixB[mixIndex];
-        const blendError = dL * dL + dA * dA + dB * dB;
-        const blendQuality = 1.0 / (1.0 + blendError * BLEND_QUALITY_SHARPNESS);
-        const pairAdjustment = lumMatchWeight * lumDiff * lumDiff - BLEND_MATCH_WEIGHT * blendQuality;
+          const mixIndex = ((nSet * COLOR_COUNT) + bg) * COLOR_COUNT + fg;
+          const lumDiff = avgL - standardBinaryMixL[mixIndex];
+          const dL = lumDiff;
+          const dA = avgA - standardBinaryMixA[mixIndex];
+          const dB = avgB - standardBinaryMixB[mixIndex];
+          const blendError = dL * dL + dA * dA + dB * dB;
+          const blendQuality = 1.0 / (1.0 + blendError * BLEND_QUALITY_SHARPNESS);
+          const pairAdjustment = lumMatchWeight * lumDiff * lumDiff - BLEND_MATCH_WEIGHT * blendQuality;
 
-        let total =
-          bgErr +
-          <f64>outputSetErrs[rowBase + fg] +
-          csfPenalty +
-          pairAdjustment;
+          let total =
+            bgErr +
+            <f64>outputSetErrs[rowBase + fg] +
+            csfPenalty +
+            pairAdjustment;
 
-        if (csfBase > 0.0) {
-          total += csfBase * (1.0 - BLEND_CSF_RELIEF * blendQuality);
-        }
+          if (csfBase > 0.0) {
+            total += csfBase * (1.0 - BLEND_CSF_RELIEF * blendQuality);
+          }
 
-        if (hasEdges) {
-          const pairIndex = bg * COLOR_COUNT + fg;
-          const thresholdLo = standardThresholdLoScratch[pairIndex];
-          const thresholdHi = standardThresholdHiScratch[pairIndex];
-          const mismatchLo = packedBinaryGlyphLo[ch] ^ thresholdLo;
-          const mismatchHi = packedBinaryGlyphHi[ch] ^ thresholdHi;
-          const edgeMismatches =
-            <f64>(
-              popcnt<u32>(mismatchLo & edgeMaskLo) +
-              popcnt<u32>(mismatchHi & edgeMaskHi)
-            );
-          total += edgeWeight * edgeMismatches;
-        }
+          if (hasEdges) {
+            const pairIndex = bg * COLOR_COUNT + fg;
+            const thresholdLo = standardThresholdLoScratch[pairIndex];
+            const thresholdHi = standardThresholdHiScratch[pairIndex];
+            const mismatchLo = packedBinaryGlyphLo[ch] ^ thresholdLo;
+            const mismatchHi = packedBinaryGlyphHi[ch] ^ thresholdHi;
+            const edgeMismatches =
+              <f64>(
+                popcnt<u32>(mismatchLo & edgeMaskLo) +
+                popcnt<u32>(mismatchHi & edgeMaskHi)
+              );
+            total += edgeWeight * edgeMismatches;
+          }
 
-        if (total > scoreThreshold && blendQuality < WILDCARD_BLEND_QUALITY_MIN) continue;
+          if (total > scoreThreshold && blendQuality < WILDCARD_BLEND_QUALITY_MIN) continue;
 
-        if (insertStandardPoolCandidate(bi, clampedPoolSize, ch, fg, total)) {
-          admitted += 1;
+          if (insertStandardPoolCandidate(bi, clampedPoolSize, ch, fg, total)) {
+            admitted += 1;
+          }
         }
       }
     }

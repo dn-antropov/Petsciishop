@@ -6,7 +6,7 @@ Spec reference: `docs/TRUSKI3000_Engine.md`
 Standard mode: `src/utils/importers/imageConverterStandardCore.ts` (independent scoring pipeline)
 ECM/MCM modes: `src/utils/importers/imageConverter.ts`
 
-Last updated: 2026-03-10
+Last updated: 2026-03-11
 
 ---
 
@@ -178,7 +178,7 @@ All constants in `imageConverterStandardCore.ts`:
 12. **Standard full solver core in WASM** — **DONE**. Resident state, host API, coarse background ranking, candidate scoring/pool construction, iterative solve passes, refinement/post-passes, finalization, and wildcard admission are in WASM for Standard
 13. **ECM/MCM full solver cores in WASM** — **DONE**. Both ECM and MCM screen solve + refinement (neighbor passes, color coherence, edge continuity) now run in WASM via shared kernel entrypoints. ECM per-combo solve: 85.8% faster (7.0x), per-combo total: 61.7% faster (2.6x). MCM per-combo solve: 82.4% faster (5.7x), per-combo total: 22.5% faster (1.3x)
 14. **Resident solver state in WASM memory** — **DONE**. Standard source planes, pairDiff/LUT data, candidate buffers, and screen-state buffers stay resident per request, and ECM/MCM now upload per-offset cell error tables once so the kernels read resident cell buffers by `cellIndex` rather than copying one cell at a time from JS
-15. **Progress/result bridge + JS fallback reduction** — **PARTIAL**. Standard progress/result bridging exists and the Standard tail now runs in WASM, but the JS fallback remains for safety and ECM/MCM solving still lives outside the WASM-first path
+15. **Progress/result bridge + JS fallback reduction** — **PARTIAL**. Standard progress/result bridging exists, ECM pool construction/finalization is now parity-clean on the WASM-first path, and the Standard tail runs in WASM. The remaining work is MCM triple ranking/pool construction plus shrinking JS fallback/result reconstruction paths
 
 ### Performance (Phase 5 groundwork)
 16. **WASM kernel performance** — Standard is now materially faster on the WASM-first path. Exact benchmark on the accepted six-fixture Standard set:

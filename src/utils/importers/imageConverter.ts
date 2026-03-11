@@ -90,6 +90,7 @@ const ENABLE_MCM_CELL_STATE_REUSE = true;
 const _ecmSolveCounts = new Uint8Array(CELL_COUNT);
 const _ecmSolveChars = new Uint8Array(CELL_COUNT * 16);
 const _ecmSolveFgs = new Uint8Array(CELL_COUNT * 16);
+const _ecmSolveBgs = new Uint8Array(CELL_COUNT * 16);
 const _ecmSolveBaseErrors = new Float64Array(CELL_COUNT * 16);
 const _ecmSolveBrightnessResiduals = new Float64Array(CELL_COUNT * 16);
 const _ecmSolveRepeatH = new Float64Array(CELL_COUNT * 16);
@@ -100,6 +101,7 @@ const _ecmSolveEdgeLeft = new Uint8Array(CELL_COUNT * 16 * 8);
 const _ecmSolveEdgeRight = new Uint8Array(CELL_COUNT * 16 * 8);
 const _ecmSolveEdgeTop = new Uint8Array(CELL_COUNT * 16 * 8);
 const _ecmSolveEdgeBottom = new Uint8Array(CELL_COUNT * 16 * 8);
+const _ecmSelectedIndicesU8 = new Uint8Array(CELL_COUNT);
 
 // --- Color Science ---
 
@@ -446,6 +448,23 @@ interface ScreenCandidate {
   repeatV: number;
   variant: ScreenCandidateVariant;
 }
+
+type CompactBinaryCandidatePoolsByBackground = {
+  poolSize: number;
+  counts: Uint8Array;
+  chars: Uint8Array;
+  fgs: Uint8Array;
+  baseErrors: Float64Array;
+  brightnessResiduals: Float64Array;
+  repeatH: Float64Array;
+  repeatV: Float64Array;
+  coherenceColorMasks: Uint16Array;
+  glyphDirections: Uint8Array;
+  edgeLeft: Uint8Array;
+  edgeRight: Uint8Array;
+  edgeTop: Uint8Array;
+  edgeBottom: Uint8Array;
+};
 
 interface PetsciiResult {
   screencodes: number[];
@@ -1083,18 +1102,31 @@ function insertTopCandidate(pool: ScreenCandidate[], candidate: ScreenCandidate,
   }
 }
 
+function writeBinaryEdges(
+  mask: Uint8Array,
+  bg: number,
+  fg: number,
+  edgeLeft: Uint8Array,
+  edgeRight: Uint8Array,
+  edgeTop: Uint8Array,
+  edgeBottom: Uint8Array,
+  edgeBase: number = 0
+) {
+  for (let i = 0; i < 8; i++) {
+    edgeLeft[edgeBase + i] = mask[i * 8] ? fg : bg;
+    edgeRight[edgeBase + i] = mask[i * 8 + 7] ? fg : bg;
+    edgeTop[edgeBase + i] = mask[i] ? fg : bg;
+    edgeBottom[edgeBase + i] = mask[56 + i] ? fg : bg;
+  }
+}
+
 function buildBinaryEdges(mask: Uint8Array, bg: number, fg: number): Pick<ScreenCandidate, 'edgeLeft' | 'edgeRight' | 'edgeTop' | 'edgeBottom'> {
   const edgeLeft = new Uint8Array(8);
   const edgeRight = new Uint8Array(8);
   const edgeTop = new Uint8Array(8);
   const edgeBottom = new Uint8Array(8);
 
-  for (let i = 0; i < 8; i++) {
-    edgeLeft[i] = mask[i * 8] ? fg : bg;
-    edgeRight[i] = mask[i * 8 + 7] ? fg : bg;
-    edgeTop[i] = mask[i] ? fg : bg;
-    edgeBottom[i] = mask[56 + i] ? fg : bg;
-  }
+  writeBinaryEdges(mask, bg, fg, edgeLeft, edgeRight, edgeTop, edgeBottom);
 
   return { edgeLeft, edgeRight, edgeTop, edgeBottom };
 }
@@ -1165,11 +1197,22 @@ function computeSelfTileScale(
   pairDiff: Float64Array,
   maxPairDiff: number
 ): number {
+  return computeSelfTileScaleAt(first, 0, second, 0, pairDiff, maxPairDiff);
+}
+
+function computeSelfTileScaleAt(
+  first: Uint8Array,
+  firstOffset: number,
+  second: Uint8Array,
+  secondOffset: number,
+  pairDiff: Float64Array,
+  maxPairDiff: number
+): number {
   let total = 0;
-  for (let i = 0; i < first.length; i++) {
-    total += pairDiff[first[i] * 16 + second[i]];
+  for (let i = 0; i < 8; i++) {
+    total += pairDiff[first[firstOffset + i] * 16 + second[secondOffset + i]];
   }
-  return total / (first.length * maxPairDiff);
+  return total / (8 * maxPairDiff);
 }
 
 function makeBinaryCandidate(
@@ -1198,6 +1241,46 @@ function makeBinaryCandidate(
     repeatV: computeSelfTileScale(edges.edgeBottom, edges.edgeTop, pairDiff, maxPairDiff),
     variant: 'binary',
   };
+}
+
+function writeCompactBinaryCandidateSlot(
+  pools: CompactBinaryCandidatePoolsByBackground,
+  slotIndex: number,
+  mask: Uint8Array,
+  char: number,
+  bg: number,
+  fg: number,
+  glyphDirection: CellGradientDirection,
+  baseError: number,
+  brightnessResidual: number,
+  pairDiff: Float64Array,
+  maxPairDiff: number
+) {
+  pools.chars[slotIndex] = char;
+  pools.fgs[slotIndex] = fg;
+  pools.baseErrors[slotIndex] = baseError;
+  pools.brightnessResiduals[slotIndex] = brightnessResidual;
+  pools.coherenceColorMasks[slotIndex] = buildBinaryCoherenceColorMask(mask, bg, fg);
+  pools.glyphDirections[slotIndex] = glyphDirection;
+
+  const edgeBase = slotIndex * 8;
+  writeBinaryEdges(mask, bg, fg, pools.edgeLeft, pools.edgeRight, pools.edgeTop, pools.edgeBottom, edgeBase);
+  pools.repeatH[slotIndex] = computeSelfTileScaleAt(
+    pools.edgeRight,
+    edgeBase,
+    pools.edgeLeft,
+    edgeBase,
+    pairDiff,
+    maxPairDiff
+  );
+  pools.repeatV[slotIndex] = computeSelfTileScaleAt(
+    pools.edgeBottom,
+    edgeBase,
+    pools.edgeTop,
+    edgeBase,
+    pairDiff,
+    maxPairDiff
+  );
 }
 
 function makeMcmCandidate(
@@ -1332,6 +1415,24 @@ function buildBinaryBestErrorByBackground(
       }
     }
     return best;
+  }
+
+  if (scoringKernel?.computeModeBestErrorByBackground) {
+    return scoringKernel.computeModeBestErrorByBackground(
+      cellIndex,
+      cell.totalErrByColor,
+      cell.avgL,
+      cell.avgA,
+      cell.avgB,
+      cell.detailScore,
+      {
+        lumMatchWeight: settings.lumMatchWeight,
+        csfWeight: settings.csfWeight,
+      },
+      candidateScreencodes,
+      metrics,
+      context
+    );
   }
 
   const setErrMatrix = computeBinarySetErrMatrix(cell, context, scoringKernel, cellIndex);
@@ -1530,6 +1631,49 @@ export interface BinaryCandidateScoringKernel {
     pairDiff: Float64Array,
     context: Pick<CharsetConversionContext, 'packedBinaryGlyphLo' | 'packedBinaryGlyphHi'>
   ): Uint8Array;
+  computeModeBestErrorByBackground?(
+    cellIndex: number,
+    totalErrByColor: Float32Array,
+    avgL: number,
+    avgA: number,
+    avgB: number,
+    detailScore: number,
+    settings: {
+      lumMatchWeight: number;
+      csfWeight: number;
+    },
+    candidateScreencodes: Uint16Array,
+    metrics: PaletteMetricData,
+    context: CharsetConversionContext
+  ): Float64Array;
+  computeModeCandidatePoolsByBackground?(
+    cellIndex: number,
+    totalErrByColor: Float32Array,
+    avgL: number,
+    avgA: number,
+    avgB: number,
+    detailScore: number,
+    settings: {
+      lumMatchWeight: number;
+      csfWeight: number;
+    },
+    backgrounds: number[],
+    fgLimit: number,
+    minContrastRatio: number,
+    poolSize: number,
+    edgeMaskLo: number,
+    edgeMaskHi: number,
+    edgeWeight: number,
+    candidateScreencodes: Uint16Array,
+    metrics: PaletteMetricData,
+    context: CharsetConversionContext
+  ): {
+    counts: Uint8Array;
+    chars: Uint8Array;
+    fgs: Uint8Array;
+    scores: Float64Array;
+    setErrs: Float32Array;
+  };
 }
 
 export interface McmCandidateScoringKernel {
@@ -2680,6 +2824,20 @@ async function solveScreen(
     runEdgeContinuityPass(candidatePools, selectedIndices, selected, analysis, metrics);
   }
 
+  if (wasmKernel?.finalizeSelection) {
+    for (let cellIndex = 0; cellIndex < CELL_COUNT; cellIndex++) {
+      _ecmSelectedIndicesU8[cellIndex] = selectedIndices[cellIndex];
+    }
+    const finalized = wasmKernel.finalizeSelection(_ecmSelectedIndicesU8);
+    return {
+      screencodes: Array.from(finalized.screencodes),
+      colors: Array.from(finalized.colors),
+      bgIndices: Array.from(finalized.bgIndices),
+      totalError: finalized.totalError,
+      selected,
+    };
+  }
+
   const screencodes = new Array<number>(CELL_COUNT);
   const colors = new Array<number>(CELL_COUNT);
   const bgIndices = new Array<number>(CELL_COUNT).fill(0);
@@ -2780,6 +2938,77 @@ function buildBinaryCandidatePoolsForCellByBackground(
             );
           }
         }
+      }
+    }
+
+    for (let bi = 0; bi < backgrounds.length; bi++) {
+      if (pools[bi].length > 0) continue;
+      const bg = backgrounds[bi] ?? 0;
+      const fg = bg === 0 ? 1 : 0;
+      pools[bi] = [makeBinaryCandidate(
+        context.ref[32],
+        32,
+        bg,
+        fg,
+        context.glyphAtlas.dominantDirection[32] as CellGradientDirection,
+        Infinity,
+        0,
+        metrics.pairDiff,
+        metrics.maxPairDiff
+      )];
+    }
+
+    return pools;
+  }
+
+  if (scoringKernel?.computeModeCandidatePoolsByBackground) {
+    const edgeWeight = EDGE_MISMATCH_WEIGHT * cell.detailScore;
+    const wasmPools = scoringKernel.computeModeCandidatePoolsByBackground(
+      cellIndex,
+      cell.totalErrByColor,
+      cell.avgL,
+      cell.avgA,
+      cell.avgB,
+      cell.detailScore,
+      {
+        lumMatchWeight: settings.lumMatchWeight,
+        csfWeight: settings.csfWeight,
+      },
+      backgrounds,
+      fgLimit,
+      minContrastRatio,
+      poolSize,
+      cell.edgeMaskLo,
+      cell.edgeMaskHi,
+      edgeWeight,
+      candidateScreencodes,
+      metrics,
+      context
+    );
+
+    for (let bi = 0; bi < backgrounds.length; bi++) {
+      const bg = backgrounds[bi];
+      const pool = pools[bi];
+      const count = Math.min(poolSize, wasmPools.counts[bi] ?? 0);
+      const base = bi * 16;
+      for (let slot = 0; slot < count; slot++) {
+        const ch = wasmPools.chars[base + slot] ?? 0;
+        const fg = wasmPools.fgs[base + slot] ?? 0;
+        const total = wasmPools.scores[base + slot] ?? Infinity;
+        const mixIndex = binaryMixIndex(context.refSetCount[ch], bg, fg);
+        pool.push(
+          makeBinaryCandidate(
+            context.ref[ch],
+            ch,
+            bg,
+            fg,
+            context.glyphAtlas.dominantDirection[ch] as CellGradientDirection,
+            total,
+            scoringTables.brightnessResidual[mixIndex],
+            metrics.pairDiff,
+            metrics.maxPairDiff
+          )
+        );
       }
     }
 
@@ -2911,6 +3140,128 @@ async function buildBinaryCandidatePoolsByBackground(
   return candidatePoolsByBackground;
 }
 
+function createCompactBinaryCandidatePoolsByBackground(
+  poolSize: number
+): CompactBinaryCandidatePoolsByBackground {
+  const slotCount = 16 * CELL_COUNT * poolSize;
+  return {
+    poolSize,
+    counts: new Uint8Array(16 * CELL_COUNT),
+    chars: new Uint8Array(slotCount),
+    fgs: new Uint8Array(slotCount),
+    baseErrors: new Float64Array(slotCount),
+    brightnessResiduals: new Float64Array(slotCount),
+    repeatH: new Float64Array(slotCount),
+    repeatV: new Float64Array(slotCount),
+    coherenceColorMasks: new Uint16Array(slotCount),
+    glyphDirections: new Uint8Array(slotCount),
+    edgeLeft: new Uint8Array(slotCount * 8),
+    edgeRight: new Uint8Array(slotCount * 8),
+    edgeTop: new Uint8Array(slotCount * 8),
+    edgeBottom: new Uint8Array(slotCount * 8),
+  };
+}
+
+async function buildBinaryCompactCandidatePoolsByBackground(
+  cells: SourceCellData[],
+  context: CharsetConversionContext,
+  metrics: PaletteMetricData,
+  settings: ConverterSettings,
+  charLimit: number,
+  backgrounds: number[],
+  fgLimit: number,
+  poolSize: number,
+  scoringKernel: BinaryCandidateScoringKernel,
+  shouldCancel?: () => boolean,
+  minContrastRatio: number = MIN_PAIR_DIFF_RATIO
+): Promise<CompactBinaryCandidatePoolsByBackground> {
+  const candidateScreencodes = getCandidateScreencodes(charLimit, settings.includeTypographic);
+  const compactPools = createCompactBinaryCandidatePoolsByBackground(poolSize);
+  const fallbackChar = 32;
+  const fallbackDirection = context.glyphAtlas.dominantDirection[fallbackChar] as CellGradientDirection;
+
+  for (let cellIndex = 0; cellIndex < cells.length; cellIndex++) {
+    const cell = cells[cellIndex];
+    const scoringTables = buildBinaryCellScoringTables(cell, context, metrics, settings, charLimit);
+    const edgeWeight = EDGE_MISMATCH_WEIGHT * cell.detailScore;
+    const wasmPools = scoringKernel.computeModeCandidatePoolsByBackground!(
+      cellIndex,
+      cell.totalErrByColor,
+      cell.avgL,
+      cell.avgA,
+      cell.avgB,
+      cell.detailScore,
+      {
+        lumMatchWeight: settings.lumMatchWeight,
+        csfWeight: settings.csfWeight,
+      },
+      backgrounds,
+      fgLimit,
+      minContrastRatio,
+      poolSize,
+      cell.edgeMaskLo,
+      cell.edgeMaskHi,
+      edgeWeight,
+      candidateScreencodes,
+      metrics,
+      context
+    );
+
+    for (let bi = 0; bi < backgrounds.length; bi++) {
+      const bg = backgrounds[bi];
+      const countIndex = bg * CELL_COUNT + cellIndex;
+      const slotBase = countIndex * poolSize;
+      let count = Math.min(poolSize, wasmPools.counts[bi] ?? 0);
+
+      if (count === 0) {
+        const fallbackFg = bg === 0 ? 1 : 0;
+        compactPools.counts[countIndex] = 1;
+        writeCompactBinaryCandidateSlot(
+          compactPools,
+          slotBase,
+          context.ref[fallbackChar],
+          fallbackChar,
+          bg,
+          fallbackFg,
+          fallbackDirection,
+          Infinity,
+          0,
+          metrics.pairDiff,
+          metrics.maxPairDiff
+        );
+        continue;
+      }
+
+      compactPools.counts[countIndex] = count;
+      const wasmBase = bi * 16;
+      for (let slot = 0; slot < count; slot++) {
+        const ch = wasmPools.chars[wasmBase + slot] ?? 0;
+        const fg = wasmPools.fgs[wasmBase + slot] ?? 0;
+        const mixIndex = binaryMixIndex(context.refSetCount[ch], bg, fg);
+        writeCompactBinaryCandidateSlot(
+          compactPools,
+          slotBase + slot,
+          context.ref[ch],
+          ch,
+          bg,
+          fg,
+          context.glyphAtlas.dominantDirection[ch] as CellGradientDirection,
+          wasmPools.scores[wasmBase + slot] ?? Infinity,
+          scoringTables.brightnessResidual[mixIndex],
+          metrics.pairDiff,
+          metrics.maxPairDiff
+        );
+      }
+    }
+
+    if ((cellIndex & 127) === 0) {
+      await yieldToUI(shouldCancel);
+    }
+  }
+
+  return compactPools;
+}
+
 function mergeBinaryCandidatePoolsByBackground(
   candidatePoolsByBackground: ScreenCandidate[][][],
   backgrounds: number[],
@@ -2930,6 +3281,138 @@ function mergeBinaryCandidatePoolsByBackground(
   }
 
   return mergedPools;
+}
+
+function copyCompactBinaryCandidateToSolveScratch(
+  candidatePoolsByBackground: CompactBinaryCandidatePoolsByBackground,
+  bg: number,
+  sourceFlatIndex: number,
+  targetFlatIndex: number
+) {
+  _ecmSolveChars[targetFlatIndex] = candidatePoolsByBackground.chars[sourceFlatIndex];
+  _ecmSolveFgs[targetFlatIndex] = candidatePoolsByBackground.fgs[sourceFlatIndex];
+  _ecmSolveBgs[targetFlatIndex] = bg;
+  _ecmSolveBaseErrors[targetFlatIndex] = candidatePoolsByBackground.baseErrors[sourceFlatIndex];
+  _ecmSolveBrightnessResiduals[targetFlatIndex] = candidatePoolsByBackground.brightnessResiduals[sourceFlatIndex];
+  _ecmSolveRepeatH[targetFlatIndex] = candidatePoolsByBackground.repeatH[sourceFlatIndex];
+  _ecmSolveRepeatV[targetFlatIndex] = candidatePoolsByBackground.repeatV[sourceFlatIndex];
+  _ecmSolveCoherenceColorMasks[targetFlatIndex] = candidatePoolsByBackground.coherenceColorMasks[sourceFlatIndex];
+  _ecmSolveGlyphDirections[targetFlatIndex] = candidatePoolsByBackground.glyphDirections[sourceFlatIndex];
+
+  const sourceEdgeBase = sourceFlatIndex * 8;
+  const targetEdgeBase = targetFlatIndex * 8;
+  for (let i = 0; i < 8; i++) {
+    _ecmSolveEdgeLeft[targetEdgeBase + i] = candidatePoolsByBackground.edgeLeft[sourceEdgeBase + i];
+    _ecmSolveEdgeRight[targetEdgeBase + i] = candidatePoolsByBackground.edgeRight[sourceEdgeBase + i];
+    _ecmSolveEdgeTop[targetEdgeBase + i] = candidatePoolsByBackground.edgeTop[sourceEdgeBase + i];
+    _ecmSolveEdgeBottom[targetEdgeBase + i] = candidatePoolsByBackground.edgeBottom[sourceEdgeBase + i];
+  }
+}
+
+async function mergeCompactBinaryCandidatePoolsIntoSolveScratch(
+  candidatePoolsByBackground: CompactBinaryCandidatePoolsByBackground,
+  backgrounds: number[],
+  poolSize: number,
+  shouldCancel?: () => boolean
+) {
+  for (let cellIndex = 0; cellIndex < CELL_COUNT; cellIndex++) {
+    const solveBase = cellIndex * 16;
+    const merged: Array<{ bg: number; sourceFlatIndex: number; score: number }> = [];
+
+    for (let bi = 0; bi < backgrounds.length; bi++) {
+      const bg = backgrounds[bi];
+      const countIndex = bg * CELL_COUNT + cellIndex;
+      const sourceCount = candidatePoolsByBackground.counts[countIndex] ?? 0;
+      const sourceBase = countIndex * candidatePoolsByBackground.poolSize;
+
+      for (let slot = 0; slot < sourceCount; slot++) {
+        const sourceFlatIndex = sourceBase + slot;
+        const candidate = {
+          bg,
+          sourceFlatIndex,
+          score: candidatePoolsByBackground.baseErrors[sourceFlatIndex],
+        };
+        const candidateChar = candidatePoolsByBackground.chars[sourceFlatIndex];
+        const candidateFg = candidatePoolsByBackground.fgs[sourceFlatIndex];
+        const existingIndex = merged.findIndex(existing => {
+          const existingSourceFlatIndex = existing.sourceFlatIndex;
+          return (
+            existing.bg === bg &&
+            candidatePoolsByBackground.chars[existingSourceFlatIndex] === candidateChar &&
+            candidatePoolsByBackground.fgs[existingSourceFlatIndex] === candidateFg
+          );
+        });
+
+        if (existingIndex >= 0) {
+          if (candidate.score >= merged[existingIndex].score) {
+            continue;
+          }
+          merged.splice(existingIndex, 1);
+        } else if (
+          merged.length >= poolSize &&
+          candidate.score >= merged[merged.length - 1].score
+        ) {
+          continue;
+        }
+
+        let insertAt = merged.length;
+        while (insertAt > 0 && candidate.score < merged[insertAt - 1].score) {
+          insertAt--;
+        }
+        merged.splice(insertAt, 0, candidate);
+        if (merged.length > poolSize) {
+          merged.length = poolSize;
+        }
+      }
+    }
+
+    const count = Math.min(poolSize, merged.length);
+    for (let slot = 0; slot < count; slot++) {
+      copyCompactBinaryCandidateToSolveScratch(
+        candidatePoolsByBackground,
+        merged[slot].bg,
+        merged[slot].sourceFlatIndex,
+        solveBase + slot
+      );
+    }
+    _ecmSolveCounts[cellIndex] = count;
+    if ((cellIndex & 127) === 0) {
+      await yieldToUI(shouldCancel);
+    }
+  }
+}
+
+function materializeSelectedBinaryCandidatesFromSolveScratch(
+  selectedIndices: ArrayLike<number>
+): ScreenCandidate[] {
+  const selected = new Array<ScreenCandidate>(CELL_COUNT);
+
+  for (let cellIndex = 0; cellIndex < CELL_COUNT; cellIndex++) {
+    const count = Math.max(1, _ecmSolveCounts[cellIndex] ?? 0);
+    const selectedIndex = Math.min(count - 1, selectedIndices[cellIndex] ?? 0);
+    const flatIndex = cellIndex * 16 + selectedIndex;
+    const edgeBase = flatIndex * 8;
+
+    _ecmSelectedIndicesU8[cellIndex] = selectedIndex;
+    selected[cellIndex] = {
+      char: _ecmSolveChars[flatIndex],
+      fg: _ecmSolveFgs[flatIndex],
+      bg: _ecmSolveBgs[flatIndex],
+      baseError: _ecmSolveBaseErrors[flatIndex],
+      brightnessResidual: _ecmSolveBrightnessResiduals[flatIndex],
+      coherenceColorMask: _ecmSolveCoherenceColorMasks[flatIndex],
+      glyphDirection: _ecmSolveGlyphDirections[flatIndex] as CellGradientDirection,
+      edgeLeft: _ecmSolveEdgeLeft.slice(edgeBase, edgeBase + 8),
+      edgeRight: _ecmSolveEdgeRight.slice(edgeBase, edgeBase + 8),
+      edgeTop: _ecmSolveEdgeTop.slice(edgeBase, edgeBase + 8),
+      edgeBottom: _ecmSolveEdgeBottom.slice(edgeBase, edgeBase + 8),
+      repeatH: _ecmSolveRepeatH[flatIndex],
+      repeatV: _ecmSolveRepeatV[flatIndex],
+      variant: 'binary',
+    };
+  }
+
+  return selected;
 }
 
 async function buildMcmCellScoringStates(
@@ -3240,6 +3723,124 @@ function refineEcmBackgroundSet(
   return quantized;
 }
 
+function canUseCompactEcmWasmPath(
+  scoringKernel: BinaryCandidateScoringKernel | undefined,
+  wasmKernel: StandardCandidateScoringKernel | undefined
+): wasmKernel is StandardCandidateScoringKernel {
+  return Boolean(
+    scoringKernel?.computeModeCandidatePoolsByBackground &&
+    wasmKernel?.solveSelectionWithNeighborPasses &&
+    wasmKernel?.refineSelectionWithPostPasses &&
+    wasmKernel?.finalizeSelection
+  );
+}
+
+async function solveCompactBinaryScreenWithKernel(
+  candidatePoolsByBackground: CompactBinaryCandidatePoolsByBackground,
+  backgrounds: number[],
+  analysis: SourceAnalysis,
+  shouldCancel: (() => boolean) | undefined,
+  wasmKernel: StandardCandidateScoringKernel
+): Promise<PetsciiResult & { selected: ScreenCandidate[] }> {
+  if (!wasmKernel.solveSelectionWithNeighborPasses || !wasmKernel.refineSelectionWithPostPasses || !wasmKernel.finalizeSelection) {
+    throw new Error('[TruSkii3000] ECM compact solve requires the full binary WASM solve kernel.');
+  }
+
+  await mergeCompactBinaryCandidatePoolsIntoSolveScratch(
+    candidatePoolsByBackground,
+    backgrounds,
+    ECM_POOL_SIZE,
+    shouldCancel
+  );
+
+  const wasmSelectedIndices = wasmKernel.solveSelectionWithNeighborPasses(
+    _ecmSolveCounts,
+    _ecmSolveChars,
+    _ecmSolveFgs,
+    _ecmSolveBaseErrors,
+    _ecmSolveBrightnessResiduals,
+    _ecmSolveRepeatH,
+    _ecmSolveRepeatV,
+    _ecmSolveEdgeLeft,
+    _ecmSolveEdgeRight,
+    _ecmSolveEdgeTop,
+    _ecmSolveEdgeBottom,
+    analysis.hBoundaryDiffs,
+    analysis.vBoundaryDiffs,
+    SCREEN_SOLVE_PASSES
+  );
+  const refinedSelectedIndices = wasmKernel.refineSelectionWithPostPasses(
+    wasmSelectedIndices,
+    _ecmSolveCoherenceColorMasks,
+    _ecmSolveGlyphDirections,
+    analysis.detailScores,
+    analysis.gradientDirections,
+    COLOR_COHERENCE_PASSES,
+    EDGE_CONTINUITY_PASSES
+  );
+  const selected = materializeSelectedBinaryCandidatesFromSolveScratch(refinedSelectedIndices);
+  const finalized = wasmKernel.finalizeSelection(_ecmSelectedIndicesU8);
+
+  return {
+    screencodes: Array.from(finalized.screencodes),
+    colors: Array.from(finalized.colors),
+    bgIndices: Array.from(finalized.bgIndices),
+    totalError: finalized.totalError,
+    selected,
+  };
+}
+
+async function runEcmRegisterResolvePassCompact(
+  analysis: SourceAnalysis,
+  context: CharsetConversionContext,
+  metrics: PaletteMetricData,
+  settings: ConverterSettings,
+  candidatePoolsByBackground: CompactBinaryCandidatePoolsByBackground,
+  orderedBgs: number[],
+  solved: PetsciiResult & { selected: ScreenCandidate[] },
+  shouldCancel: (() => boolean) | undefined,
+  wasmKernel: StandardCandidateScoringKernel
+): Promise<{ orderedBgs: number[]; solved: PetsciiResult & { selected: ScreenCandidate[] } }> {
+  let bestOrderedBgs = orderedBgs;
+  let bestSolved = solved;
+  let currentOrderedBgs = orderedBgs;
+  let currentSolved = solved;
+
+  for (let pass = 0; pass < ECM_REGISTER_RESOLVE_PASSES; pass++) {
+    const refinedSet = refineEcmBackgroundSet(
+      analysis,
+      context,
+      metrics,
+      currentSolved.selected,
+      currentOrderedBgs,
+      settings.manualBgColor
+    );
+    if (sameBackgroundSet(refinedSet, currentOrderedBgs)) {
+      break;
+    }
+
+    const refinedSolved = await solveCompactBinaryScreenWithKernel(
+      candidatePoolsByBackground,
+      refinedSet,
+      analysis,
+      shouldCancel,
+      wasmKernel
+    );
+    const refinedOrderedBgs = chooseOrderedEcmBackgrounds(refinedSet, refinedSolved.selected, settings.manualBgColor);
+
+    if (refinedSolved.totalError >= bestSolved.totalError) {
+      break;
+    }
+
+    bestSolved = refinedSolved;
+    bestOrderedBgs = refinedOrderedBgs;
+    currentSolved = refinedSolved;
+    currentOrderedBgs = refinedOrderedBgs;
+  }
+
+  return { orderedBgs: bestOrderedBgs, solved: bestSolved };
+}
+
 async function runEcmRegisterResolvePass(
   analysis: SourceAnalysis,
   context: CharsetConversionContext,
@@ -3293,6 +3894,7 @@ async function runEcmRegisterResolvePass(
 async function solveEcmForCombo(
   analysis: SourceAnalysis,
   context: CharsetConversionContext,
+  charset: ConverterCharset,
   metrics: PaletteMetricData,
   settings: ConverterSettings,
   palette: PaletteColor[] | undefined,
@@ -3304,6 +3906,7 @@ async function solveEcmForCombo(
   // implements StandardCandidateScoringKernel (solve/refine/finalize methods).
   // Duck-type check happens inside trySolveScreenWithKernel.
   const ecmWasmKernel = scoringKernel as unknown as StandardCandidateScoringKernel | undefined;
+  const useCompactEcmWasmPath = canUseCompactEcmWasmPath(scoringKernel, ecmWasmKernel);
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const backgroundSets = buildEcmBackgroundSets(settings.manualBgColor);
   const allBackgrounds = buildBackgroundColorList();
@@ -3325,19 +3928,36 @@ async function solveEcmForCombo(
     .slice(0, Math.min(ECM_FINALIST_COUNT, backgroundSets.length));
   const tCoarse1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const tPool0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-  const candidatePoolsByBackground = await buildBinaryCandidatePoolsByBackground(
-    analysis.cells,
-    context,
-    metrics,
-    settings,
-    64,
-    allBackgrounds,
-    16,
-    ECM_POOL_SIZE,
-    scoringKernel,
-    shouldCancel,
-    0 // ECM: disable contrast filter to preserve color diversity with only 4 backgrounds
-  );
+  const candidatePoolsByBackground = useCompactEcmWasmPath
+    ? undefined
+    : await buildBinaryCandidatePoolsByBackground(
+        analysis.cells,
+        context,
+        metrics,
+        settings,
+        64,
+        allBackgrounds,
+        16,
+        ECM_POOL_SIZE,
+        scoringKernel,
+        shouldCancel,
+        0 // ECM: disable contrast filter to preserve color diversity with only 4 backgrounds
+      );
+  const compactCandidatePoolsByBackground = useCompactEcmWasmPath
+    ? await buildBinaryCompactCandidatePoolsByBackground(
+        analysis.cells,
+        context,
+        metrics,
+        settings,
+        64,
+        allBackgrounds,
+        16,
+        ECM_POOL_SIZE,
+        scoringKernel!,
+        shouldCancel,
+        0 // ECM: disable contrast filter to preserve color diversity with only 4 backgrounds
+      )
+    : undefined;
   let poolTime = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - tPool0;
 
   let best: SolvedModeCandidate | undefined;
@@ -3350,14 +3970,24 @@ async function solveEcmForCombo(
     await yieldToUI(shouldCancel);
 
     const tMerge0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    const candidatePools = mergeBinaryCandidatePoolsByBackground(
-      candidatePoolsByBackground,
-      set,
-      ECM_POOL_SIZE
-    );
+    const candidatePools = candidatePoolsByBackground
+      ? mergeBinaryCandidatePoolsByBackground(
+          candidatePoolsByBackground,
+          set,
+          ECM_POOL_SIZE
+        )
+      : undefined;
     poolTime += (typeof performance !== 'undefined' ? performance.now() : Date.now()) - tMerge0;
     const tSolve0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    const solved = await solveScreen(candidatePools, analysis, metrics, shouldCancel, ecmWasmKernel);
+    const solved = compactCandidatePoolsByBackground
+      ? await solveCompactBinaryScreenWithKernel(
+          compactCandidatePoolsByBackground,
+          set,
+          analysis,
+          shouldCancel,
+          ecmWasmKernel!
+        )
+      : await solveScreen(candidatePools!, analysis, metrics, shouldCancel, ecmWasmKernel);
     solveTime += (typeof performance !== 'undefined' ? performance.now() : Date.now()) - tSolve0;
     const orderedBgs = chooseOrderedEcmBackgrounds(set, solved.selected, settings.manualBgColor);
     const bgIndices = buildEcmBgIndices(orderedBgs, solved.selected);
@@ -3369,7 +3999,7 @@ async function solveEcmForCombo(
       ecmBgColors: orderedBgs,
       bgIndices,
       mcmSharedColors: [],
-      charset: 'upper',
+      charset,
       mode: 'ecm',
     };
     best = pickBetterModeCandidate(best, {
@@ -3390,17 +4020,29 @@ async function solveEcmForCombo(
   if (best && bestSolved && bestOrderedBgs) {
     onProgress('Converting', 'ECM register re-solve (1/1)', 100);
     await yieldToUI(shouldCancel);
-    const refined = await runEcmRegisterResolvePass(
-      analysis,
-      context,
-      metrics,
-      settings,
-      candidatePoolsByBackground,
-      bestOrderedBgs,
-      bestSolved,
-      shouldCancel,
-      ecmWasmKernel
-    );
+    const refined = compactCandidatePoolsByBackground
+      ? await runEcmRegisterResolvePassCompact(
+          analysis,
+          context,
+          metrics,
+          settings,
+          compactCandidatePoolsByBackground,
+          bestOrderedBgs,
+          bestSolved,
+          shouldCancel,
+          ecmWasmKernel!
+        )
+      : await runEcmRegisterResolvePass(
+          analysis,
+          context,
+          metrics,
+          settings,
+          candidatePoolsByBackground!,
+          bestOrderedBgs,
+          bestSolved,
+          shouldCancel,
+          ecmWasmKernel
+        );
     if (refined.solved.totalError < best.error) {
       const bgIndices = buildEcmBgIndices(refined.orderedBgs, refined.solved.selected);
       best = {
@@ -3412,7 +4054,7 @@ async function solveEcmForCombo(
           ecmBgColors: refined.orderedBgs,
           bgIndices,
           mcmSharedColors: [],
-          charset: 'upper',
+          charset,
           mode: 'ecm',
         },
         preview: palette
@@ -3613,7 +4255,7 @@ async function solveModeForAnalysis(
       50
     );
     const solved = mode === 'ecm'
-      ? await solveEcmForCombo(analysis, context, metrics, settings, undefined, binaryScoringKernel, charsetProgress, shouldCancel)
+      ? await solveEcmForCombo(analysis, context, charset, metrics, settings, undefined, binaryScoringKernel, charsetProgress, shouldCancel)
       : await solveMcmForCombo(analysis, context, metrics, settings, undefined, mcmScoringKernel, charsetProgress, shouldCancel, binaryScoringKernel);
     solved.conversion.charset = charset;
     solved.conversion.accelerationBackend = backend;
