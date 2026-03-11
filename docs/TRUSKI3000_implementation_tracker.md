@@ -162,6 +162,23 @@ All constants in `imageConverterStandardCore.ts`:
 4. **Port wildcard admission** — Replace blunt "disable all contrast filtering" with competitive wildcard system (score margin + blend quality threshold). More selective than flooding pools.
 5. **Expand dedicated ECM tuning scenario sets** — Baselines now exist for the shared six-fixture set; next step is richer ECM-specific tuning scenarios rather than basic mode coverage
 
+### CODEX: ECM baseline provenance and preferred drift notes (2026-03-11)
+- Stored ECM baselines for `doggy` and `house-a` are stale reference artifacts, not a recent regression introduced by the Phase 6 worker/WASM transport work. Both fixtures are JS/WASM parity-clean on current HEAD.
+- `doggy` was traced across repo history:
+  - `5f6d90d`: poor ECM solve, `upper`, bg `[8,9,10,15]`, `qualityMeanDeltaE 0.2534`
+  - `16a8b33`: first major quality recovery, `upper`, bg `[8,7,15,10]`, `0.1424`
+  - `daf9d14`: second major recovery, `lower`, bg `[7,11,12,5]`, `0.1024`
+  - `59bc36e`: first commit that matches the current preferred output exactly, `upper`, bg `[11,12,7,15]`, `0.095247`
+- Interpretation:
+  - The first quality wave came from ECM candidate-pool/indexing/contrast/cache fixes (`16a8b33`, `daf9d14`)
+  - The final jump to the accepted current `doggy` output came from the shared ECM solve/parity refactor in `59bc36e`
+  - This drift is not caused by later WASM progress/result bridge work (`6.4b`/`6.4c`)
+- `house-a` current ECM output is also preferred over baseline, but its bg register set stayed `[9,15,0,12]`; the gain is per-cell candidate quality, not coarse bg-set selection.
+- Current `doggy` color diagnostics suggest the remaining ECM headroom is reducing gray/black over-selection in detailed tiles:
+  - underused vs ideal: `lgray`, `brown`, `white`, `orange`, `yellow`, `green`
+  - overused vs ideal: `black`, `dgray`, `mgray`
+- Operational rule going forward: refresh `doggy` / `house-a` ECM baselines deliberately as accepted quality improvements, not as regression fixes, and preserve this provenance note so future benchmark work does not misclassify them.
+
 ### Next: MCM Quality Tuning (port Standard innovations + MCM-specific)
 
 **Shared with ECM** (same changes benefit both — items 1, 3 above apply to MCM's hires-within-MCM candidates too):
@@ -178,7 +195,7 @@ All constants in `imageConverterStandardCore.ts`:
 12. **Standard full solver core in WASM** — **DONE**. Resident state, host API, coarse background ranking, candidate scoring/pool construction, iterative solve passes, refinement/post-passes, finalization, and wildcard admission are in WASM for Standard
 13. **ECM/MCM full solver cores in WASM** — **DONE**. Both ECM and MCM screen solve + refinement (neighbor passes, color coherence, edge continuity) now run in WASM via shared kernel entrypoints. ECM per-combo solve: 85.8% faster (7.0x), per-combo total: 61.7% faster (2.6x). MCM per-combo solve: 82.4% faster (5.7x), per-combo total: 22.5% faster (1.3x)
 14. **Resident solver state in WASM memory** — **DONE**. Standard source planes, pairDiff/LUT data, candidate buffers, and screen-state buffers stay resident per request, and ECM/MCM now upload per-offset cell error tables once so the kernels read resident cell buffers by `cellIndex` rather than copying one cell at a time from JS
-15. **Progress/result bridge + JS fallback reduction** — **PARTIAL**. Standard progress/result bridging exists, ECM pool construction/finalization is parity-clean on the WASM-first path, MCM triple ranking plus per-cell candidate-pool construction stay on the WASM-first path, and mode workers now return transferable typed result buffers plus structured progress checkpoints so the main thread assembles the final `ConversionResult`. The remaining work is shrinking JS fallback paths
+15. **Progress/result bridge + JS fallback reduction** — **PARTIAL**. Standard progress/result bridging exists, ECM pool construction/finalization is parity-clean on the WASM-first path, MCM triple ranking plus per-cell candidate-pool construction stay on the WASM-first path, and mode workers now return transferable typed result buffers plus structured progress checkpoints so the main thread assembles the final `ConversionResult`. The old `auto` backend selection has been removed, `js` is now an explicit reference/debug path, and requested `wasm` no longer silently downgrades to JS. The remaining work is shrinking the last legacy/debug fallback paths
 
 ### Performance (Phase 5 groundwork)
 16. **WASM kernel performance** — Standard is now materially faster on the WASM-first path. Exact benchmark on the accepted six-fixture Standard set:

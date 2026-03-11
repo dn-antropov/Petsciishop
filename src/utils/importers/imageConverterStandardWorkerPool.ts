@@ -56,9 +56,9 @@ type ActiveRequest = {
   reject: (error: unknown) => void;
 };
 
-type WorkerAccelerationMode = 'auto' | 'js' | 'wasm';
+type WorkerAccelerationMode = 'js' | 'wasm';
 
-let workerAccelerationMode: WorkerAccelerationMode = 'auto';
+let workerAccelerationMode: WorkerAccelerationMode = 'wasm';
 
 export function setStandardWorkerAccelerationMode(mode: WorkerAccelerationMode) {
   if (workerAccelerationMode === mode) {
@@ -126,10 +126,14 @@ class StandardWorkerPool {
       const allWorkersSupportWasm = workerStatuses.every(status => status.wasmEnabled);
       if (workerAccelerationMode === 'js') {
         this.backend = 'js';
+      } else if (allWorkersSupportWasm) {
+        this.backend = 'wasm';
       } else {
-        // Quality policy: prefer the exact WASM scorer whenever every worker
-        // can initialize it, and fall back to JS only when WASM is unavailable.
-        this.backend = allWorkersSupportWasm ? 'wasm' : 'js';
+        const workerDetails = workerStatuses
+          .filter(status => !status.wasmEnabled)
+          .map(status => `worker ${status.workerId}: ${status.wasmError ?? 'unknown WASM init failure'}`)
+          .join('; ');
+        throw new Error(`Standard worker pool requires WASM but could not initialize it in all workers (${workerDetails}).`);
       }
 
       if (this.backend === 'wasm') {
@@ -142,13 +146,12 @@ class StandardWorkerPool {
           })),
         });
       } else {
-        console.info('[TruSkii3000] Standard worker pool using JS path.', {
+        console.info('[TruSkii3000] Standard worker pool using explicit JS path.', {
           workerCount: workerStatuses.length,
           requestedMode: workerAccelerationMode,
           workers: workerStatuses.map(status => ({
             workerId: status.workerId,
-            backend: status.wasmEnabled ? 'wasm-available' : 'js-only',
-            wasmError: status.wasmError,
+            backend: 'js',
           })),
         });
       }

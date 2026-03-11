@@ -63,9 +63,9 @@ type WorkerReadyStatus = {
   wasmErrors?: Partial<Record<WorkerMode, string>>;
 };
 
-type WorkerAccelerationMode = 'auto' | 'js' | 'wasm';
+type WorkerAccelerationMode = 'js' | 'wasm';
 
-let workerAccelerationMode: WorkerAccelerationMode = 'auto';
+let workerAccelerationMode: WorkerAccelerationMode = 'wasm';
 
 export function setModeWorkerAccelerationMode(mode: WorkerAccelerationMode) {
   if (workerAccelerationMode === mode) {
@@ -131,18 +131,25 @@ class ModeWorkerPool {
       } satisfies ConverterWorkerRequestMessage);
     }))).then(workerStatuses => {
       const allWorkersSupportWasm = workerStatuses.every(status => status.wasmByMode[supportedMode]);
-      this.backendByMode = {
-        ecm: supportedMode === 'ecm'
-          ? workerAccelerationMode === 'js'
-            ? 'js'
-            : allWorkersSupportWasm ? 'wasm' : 'js'
-          : 'js',
-        mcm: supportedMode === 'mcm'
-          ? workerAccelerationMode === 'js'
-            ? 'js'
-            : allWorkersSupportWasm ? 'wasm' : 'js'
-          : 'js',
-      };
+      if (workerAccelerationMode === 'js') {
+        this.backendByMode = {
+          ecm: supportedMode === 'ecm' ? 'js' : 'js',
+          mcm: supportedMode === 'mcm' ? 'js' : 'js',
+        };
+      } else if (allWorkersSupportWasm) {
+        this.backendByMode = {
+          ecm: supportedMode === 'ecm' ? 'wasm' : 'js',
+          mcm: supportedMode === 'mcm' ? 'wasm' : 'js',
+        };
+      } else {
+        const workerDetails = workerStatuses
+          .filter(status => !status.wasmByMode[supportedMode])
+          .map(status => `worker ${status.workerId}: ${status.wasmErrors?.[supportedMode] ?? 'unknown WASM init failure'}`)
+          .join('; ');
+        throw new Error(
+          `${supportedMode.toUpperCase()} worker pool requires WASM but could not initialize it in all workers (${workerDetails}).`
+        );
+      }
       if (this.backendByMode[supportedMode] === 'wasm') {
         console.info(`[TruSkii3000] ${supportedMode.toUpperCase()} worker pool ready with WASM in all workers.`, {
           workerCount: workerStatuses.length,
@@ -153,13 +160,12 @@ class ModeWorkerPool {
           })),
         });
       } else {
-        console.info(`[TruSkii3000] ${supportedMode.toUpperCase()} worker pool using JS path.`, {
+        console.info(`[TruSkii3000] ${supportedMode.toUpperCase()} worker pool using explicit JS path.`, {
           workerCount: workerStatuses.length,
           requestedMode: workerAccelerationMode,
           workers: workerStatuses.map(status => ({
             workerId: status.workerId,
-            backend: status.wasmByMode[supportedMode] ? 'wasm' : 'js',
-            wasmError: status.wasmErrors?.[supportedMode],
+            backend: 'js',
           })),
         });
       }

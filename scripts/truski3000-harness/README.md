@@ -27,8 +27,8 @@ Harness commands:
 - `npm run truski:harness:record` records baselines for the core subset
 - `npm run truski:harness:compare` reruns the core subset and diffs against baselines
 - `npm run truski:harness:compare:mcm` reruns only the manifest MCM scenarios and diffs against baselines
-- `npm run truski:harness:benchmark -- --iterations 1` measures the current harness scenarios under `auto`, forced-`wasm`, and forced-`js` worker modes, writing JSON to `output/benchmarks/latest.json`
-- `npm run truski:harness:benchmark:mcm` benchmarks only the MCM manifest scenarios under the `true-neutral` preset with `auto` backend selection
+- `npm run truski:harness:benchmark -- --iterations 1` measures the current harness scenarios under explicit `wasm` and `js` worker modes, writing JSON to `output/benchmarks/latest.json`
+- `npm run truski:harness:benchmark:mcm` benchmarks only the MCM manifest scenarios under the `true-neutral` preset with explicit backend selection
 - `npm run truski:harness:parity` runs each harness scenario twice, once in `JS ONLY` and once in `WASM ONLY`, and fails if summaries or previews differ
 - `npm run truski:harness:parity:mcm` runs the end-to-end backend parity check only for manifest MCM scenarios, writing JSON to `output/parity/latest.json`
 - `npm run truski:harness:validate` checks the browser-loaded WASM kernels against JS reference implementations across all 256 glyphs and representative Standard/MCM color cases, writing JSON to `output/validation/latest.json`

@@ -28,7 +28,7 @@ const validationOutputPath = path.resolve(outputRoot, 'validation', 'latest.json
 const preferredHarnessPort = 4173;
 const progressLogPrefix = '[TRUSKI_PROGRESS] ';
 const backendLogPrefix = '[TRUSKI_BACKEND] ';
-const validAccelerationModes = ['auto', 'wasm', 'js'];
+const validAccelerationModes = ['wasm', 'js'];
 
 const command = process.argv[2] ?? 'compare';
 const validCommands = new Set(['record', 'compare', 'benchmark', 'parity', 'validate']);
@@ -103,14 +103,14 @@ function modeIds() {
   return Object.keys(modeMatrix);
 }
 
-function formatRequestedAcceleration(mode = accelerationFilter ?? 'auto') {
+function formatRequestedAcceleration(mode = accelerationFilter ?? 'wasm') {
   switch (mode) {
     case 'js':
       return 'JS ONLY';
     case 'wasm':
       return 'WASM ONLY';
     default:
-      return 'AUTO';
+      return String(mode);
   }
 }
 
@@ -315,7 +315,7 @@ async function writeRunArtifacts(result) {
   }
 }
 
-async function runHarnessFixture(page, fixtureName, settings, accelerationMode = 'auto') {
+async function runHarnessFixture(page, fixtureName, settings, accelerationMode = 'wasm') {
   const evaluatePromise = page.evaluate(
     async ({ nextFixtureName, modeSettings, nextAccelerationMode }) => {
       if (!window.__TRUSKI_HARNESS__) {
@@ -737,7 +737,7 @@ function formatAccelerationMode(mode) {
     case 'wasm':
       return 'WASM ONLY';
     default:
-      return 'AUTO';
+      return String(mode);
   }
 }
 
@@ -746,7 +746,7 @@ function formatAccelerationBackend(backend) {
     case 'wasm':
       return 'WASM';
     case 'js':
-      return 'JS fallback';
+      return 'JS';
     default:
       return 'unknown';
   }
@@ -1102,7 +1102,7 @@ async function main() {
         csfOverride !== null ? `csf=${csfOverride}` : '',
       ].filter(Boolean).join(' ');
       console.log(`Running ${scenario.mode} -> ${scenario.fixture} [${formatRequestedAcceleration()}]${overrideLabel ? ' ' + overrideLabel : ''}`);
-      const result = await runHarnessFixture(page, scenario.fixture, settings, accelerationFilter ?? 'auto');
+      const result = await runHarnessFixture(page, scenario.fixture, settings, accelerationFilter ?? 'wasm');
       await writeRunArtifacts(result);
       printQualityScores(result);
       printCharacterUtilization(result);

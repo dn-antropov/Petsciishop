@@ -46,12 +46,14 @@
 - [x] 6.4b Port MCM coarse triple ranking + candidate-pool construction into WASM — legal hires-vs-multicolor cell evaluation now stays in the WASM-first search path, and the targeted `slayer_multi_color.png` MCM compare canary passed
 - [x] 6.4c Bridge compact ECM/MCM progress checkpoints + result buffers through the worker boundary — mode workers now return transferable typed result buffers plus structured progress checkpoints, and the main thread assembles the final `ConversionResult`
 - [ ] 6.4d Reduce JS fallback paths to explicit unavailable/debug paths and validate milestone canaries before any default-path change
+  - CODEX update (2026-03-11): removed the old `auto` backend mode, made `js` the explicit reference path, and stopped silent `wasm -> js` worker downgrades in the normal conversion/harness flow. Stable canaries passed for ECM `ninja-a` (`js` and `wasm`) and MCM `slayer_multi_color` (`wasm`).
 
 CODEX: Phase 6 execution policy:
 - Use targeted canary validation while iterating on a slice, not the full fixture matrix.
 - Standard canaries for ordinary 6.1 work: `doggy.png`, `ninja-a.png`, and `skeletor.png` when needed.
 - Run full mode sweeps only at milestone gates (`6.1f`, the equivalent ECM/MCM parity gates, or before changing default backend behavior).
 - Do not accept a speed win if accepted quality baselines move unexpectedly.
+- ECM provenance note (2026-03-11): stored ECM baselines for `doggy` and `house-a` are stale artifacts. Current JS/WASM-parity-clean outputs are preferred. `doggy` improved in two historical waves: `16a8b33` / `daf9d14` recovered ECM candidate-pool quality, and `59bc36e` is the first commit that matches the current accepted `doggy` output exactly. Refresh those baselines deliberately rather than treating them as regressions from `6.4` work.
 
 CODEX: Manual mode choice remains authoritative. Cross-mode ranking, recommendation, and automatic mode selection are out of scope for this change.
 CODEX: Preserve and document legal per-cell hires-versus-multicolor behavior within the MCM path; do not regress or misclassify it as forbidden mixed-mode output.

@@ -38,7 +38,7 @@ type HarnessMode = 'standard' | 'ecm' | 'mcm';
 type HarnessRunRequest = {
   fixture: string;
   settings?: Partial<ConverterSettings>;
-  accelerationMode?: 'auto' | 'js' | 'wasm';
+  accelerationMode?: 'js' | 'wasm';
 };
 
 type HarnessModeSummary = {
@@ -489,7 +489,7 @@ async function runFixture(request: HarnessRunRequest): Promise<HarnessRunResult>
 
   setStatus(`Converting ${request.fixture}...`);
   const fontBitsByCharset = buildFontBitsByCharset();
-  const accelerationMode = request.accelerationMode ?? 'auto';
+  const accelerationMode = request.accelerationMode ?? 'wasm';
   let outputs!: ConversionOutputs;
   let elapsedMs = 0;
   let lastProgressKey = '';
@@ -533,7 +533,7 @@ async function runFixture(request: HarnessRunRequest): Promise<HarnessRunResult>
     );
     elapsedMs = performance.now() - startedAt;
   } finally {
-    setConverterAccelerationMode('auto');
+    setConverterAccelerationMode('wasm');
   }
 
   const summaries: Partial<Record<HarnessMode, HarnessModeSummary>> = {};

@@ -1071,7 +1071,7 @@ function createMonotonicProgress(
 export { ConversionCancelledError } from './imageConverterStandardCore';
 export { disposeStandardConverterWorkers } from './imageConverterStandardWorkerPool';
 
-export function setConverterAccelerationMode(mode: 'auto' | 'js' | 'wasm') {
+export function setConverterAccelerationMode(mode: 'js' | 'wasm') {
   setStandardWorkerAccelerationMode(mode);
   setModeWorkerAccelerationMode(mode);
 }
@@ -5227,6 +5227,19 @@ async function solveStandardAcrossCombos(
   onStandardBackend?: StandardBackendCallback,
   shouldCancel?: () => boolean
 ): Promise<SolvedModeCandidate | undefined> {
+  if (settings.accelerationMode === 'js') {
+    return await solveStandardAcrossCombosSequential(
+      preprocessed,
+      settings,
+      contexts,
+      palette,
+      metrics,
+      onProgress,
+      onStandardBackend,
+      shouldCancel
+    );
+  }
+
   try {
     const workerSolved = await runStandardConversionInWorkers(
       preprocessed as any,
@@ -5243,20 +5256,9 @@ async function solveStandardAcrossCombos(
     if (error instanceof ConversionCancelledError) {
       throw error;
     }
-    console.warn('Standard worker acceleration failed; falling back to the single-threaded path.', error);
     disposeStandardConverterWorkers();
+    throw error;
   }
-
-  return await solveStandardAcrossCombosSequential(
-    preprocessed,
-    settings,
-    contexts,
-    palette,
-    metrics,
-    onProgress,
-    onStandardBackend,
-    shouldCancel
-  );
 }
 
 function toSolvedModeCandidateFromWorker(
@@ -5361,6 +5363,20 @@ async function solveModeAcrossOffsets(
   onModeBackend?: ModeBackendCallback,
   shouldCancel?: () => boolean
 ): Promise<SolvedModeCandidate | undefined> {
+  if (settings.accelerationMode === 'js') {
+    return await solveModeAcrossOffsetsSequential(
+      mode,
+      preprocessed,
+      settings,
+      contexts,
+      palette,
+      metrics,
+      onProgress,
+      onModeBackend,
+      shouldCancel
+    );
+  }
+
   try {
     const workerSolved = await runModeConversionInWorkers(
       mode,
@@ -5378,21 +5394,9 @@ async function solveModeAcrossOffsets(
     if (error instanceof ConversionCancelledError) {
       throw error;
     }
-    console.warn(`${mode.toUpperCase()} worker acceleration failed; falling back to the single-threaded path.`, error);
     disposeModeConverterWorkers();
+    throw error;
   }
-
-  return await solveModeAcrossOffsetsSequential(
-    mode,
-    preprocessed,
-    settings,
-    contexts,
-    palette,
-    metrics,
-    onProgress,
-    onModeBackend,
-    shouldCancel
-  );
 }
 
 async function solveModeAcrossCombos(

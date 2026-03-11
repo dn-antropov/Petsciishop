@@ -226,13 +226,17 @@ self.onmessage = async (event: MessageEvent<ConverterWorkerRequestMessage>) => {
       state.mcmScoringKernel = mcmWasm.kernel;
       if (needsStandard && standardWasm.kernel) {
         console.info('[TruSkii3000] Standard/ECM worker initialized with WASM kernel.');
+      } else if ((needsStandard || enabledModes.has('ecm')) && message.disableWasm) {
+        console.info('[TruSkii3000] Standard/ECM worker initialized in explicit JS mode.');
       } else if (needsStandard || enabledModes.has('ecm')) {
-        console.warn('[TruSkii3000] Standard/ECM worker falling back to JavaScript scoring.', standardWasm.error);
+        console.warn('[TruSkii3000] Standard/ECM worker WASM initialization failed.', standardWasm.error);
       }
       if (needsMcm && mcmWasm.kernel) {
         console.info('[TruSkii3000] MCM worker initialized with WASM kernel.');
+      } else if (needsMcm && message.disableWasm) {
+        console.info('[TruSkii3000] MCM worker initialized in explicit JS mode.');
       } else if (needsMcm) {
-        console.warn('[TruSkii3000] MCM worker falling back to JavaScript scoring.', mcmWasm.error);
+        console.warn('[TruSkii3000] MCM worker WASM initialization failed.', mcmWasm.error);
       }
       post({
         type: 'ready',
