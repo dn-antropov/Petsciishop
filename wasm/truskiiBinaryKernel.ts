@@ -66,7 +66,7 @@ const EDGE_ALIGNMENT_WEIGHT: f64 = 14.0;
 // "what does it cost if this pixel is rendered with this C64 color?"
 const weightedPixelErrors = new Float32Array(WEIGHTED_PIXEL_ERROR_COUNT);
 const modeWeightedPixelErrors = new Float32Array(MODE_WEIGHTED_PIXEL_ERROR_COUNT);
-const pairDiff = new Float32Array(PAIR_DIFF_COUNT);
+const pairDiff = new Float64Array(PAIR_DIFF_COUNT);
 const thresholdBits = new Uint32Array(2);
 
 // Charset data is flattened up front so the kernel can stay in linear memory.
@@ -828,6 +828,7 @@ function runStandardColorCoherencePass(passCount: i32): void {
 
       const currentCost = computeStandardCandidateCost(cellIndex, currentIndex);
       let bestIndex = currentIndex;
+      let bestCost = currentCost;
       let bestMissing = currentMissing;
       const count = <i32>standardSolveCounts[cellIndex];
 
@@ -841,8 +842,12 @@ function runStandardColorCoherencePass(passCount: i32): void {
         if (candidateMissing >= bestMissing) continue;
 
         const cost = computeStandardCandidateCost(cellIndex, candidateIndex);
-        if (cost <= currentCost + COLOR_COHERENCE_MAX_DELTA) {
+        if (
+          cost <= currentCost + COLOR_COHERENCE_MAX_DELTA &&
+          (candidateMissing < bestMissing || cost < bestCost)
+        ) {
           bestIndex = candidateIndex;
+          bestCost = cost;
           bestMissing = candidateMissing;
         }
       }

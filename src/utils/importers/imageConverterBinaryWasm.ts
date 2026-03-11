@@ -240,6 +240,7 @@ export interface StandardCandidateScoringKernel {
     scores: Float64Array;
     setErrs: Float32Array;
   };
+  prepareSolvePairDiff?(pairDiff: Float64Array): void;
   solveSelectionWithNeighborPasses?(
     counts: Uint8Array,
     chars: Uint8Array,
@@ -351,7 +352,7 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
   private loadedModeCells: ArrayLike<ResidentModeBinaryCell> | null = null;
   private weightedPixelErrorsView: Float32Array;
   private modeWeightedPixelErrorsView: Float32Array;
-  private pairDiffView: Float32Array;
+  private pairDiffView: Float64Array;
   private thresholdBitsView: Uint32Array;
   private positionOffsetsView: Int32Array;
   private flatPositionsView: Uint8Array;
@@ -413,7 +414,7 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
       exports.getModeWeightedPixelErrorsPtr(),
       40 * 25 * 64 * 16
     );
-    this.pairDiffView = new Float32Array(
+    this.pairDiffView = new Float64Array(
       exports.memory.buffer,
       exports.getPairDiffPtr(),
       16 * 16
@@ -888,6 +889,10 @@ export class BinaryWasmKernel implements StandardCandidateScoringKernel {
       scores: this.standardPoolScoresView.subarray(0, backgrounds.length * STANDARD_WASM_MAX_POOL_SIZE),
       setErrs: this.outputSetErrsView,
     };
+  }
+
+  prepareSolvePairDiff(pairDiff: Float64Array) {
+    this.ensurePairDiff(pairDiff);
   }
 
   solveSelectionWithNeighborPasses(

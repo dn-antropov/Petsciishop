@@ -2745,6 +2745,21 @@ function seedSelectionWithBrightnessDebt(
   return { selectedIndices, selected };
 }
 
+function materializeSelectedCandidatesFromPools(
+  candidatePools: ScreenCandidate[][],
+  selectedIndices: ArrayLike<number>
+): ScreenCandidate[] {
+  const selected = new Array<ScreenCandidate>(CELL_COUNT);
+
+  for (let cellIndex = 0; cellIndex < CELL_COUNT; cellIndex++) {
+    const pool = candidatePools[cellIndex];
+    const selectedIndex = Math.min(pool.length - 1, selectedIndices[cellIndex] ?? 0);
+    selected[cellIndex] = pool[selectedIndex];
+  }
+
+  return selected;
+}
+
 function computeCellCost(
   cellIndex: number,
   candidate: ScreenCandidate,
@@ -2909,15 +2924,83 @@ function populateSolveScratchFromCandidatePools(candidatePools: ScreenCandidate[
   }
 }
 
+async function runJsNeighborSolvePasses(
+  candidatePools: ScreenCandidate[][],
+  analysis: SourceAnalysis,
+  metrics: PaletteMetricData,
+  shouldCancel?: () => boolean,
+  seededSelection?: { selectedIndices: Int32Array; selected: ScreenCandidate[] },
+  passCount: number = SCREEN_SOLVE_PASSES
+): Promise<{ selectedIndices: Int32Array; selected: ScreenCandidate[] }> {
+  const selectedIndices = seededSelection
+    ? new Int32Array(seededSelection.selectedIndices)
+    : seedSelectionWithBrightnessDebt(candidatePools).selectedIndices;
+  const selected = seededSelection
+    ? seededSelection.selected.slice()
+    : materializeSelectedCandidatesFromPools(candidatePools, selectedIndices);
+
+  for (let pass = 0; pass < passCount; pass++) {
+    let changed = false;
+    const start = pass % 2 === 0 ? 0 : CELL_COUNT - 1;
+    const end = pass % 2 === 0 ? CELL_COUNT : -1;
+    const step = pass % 2 === 0 ? 1 : -1;
+    let visitCount = 0;
+
+    for (let cellIndex = start; cellIndex !== end; cellIndex += step) {
+      const pool = candidatePools[cellIndex];
+      let bestIdx = selectedIndices[cellIndex];
+      let bestCost = Infinity;
+
+      for (let candidateIndex = 0; candidateIndex < pool.length; candidateIndex++) {
+        const candidate = pool[candidateIndex];
+        const cost = computeCellCost(cellIndex, candidate, selected, metrics, analysis);
+
+        if (cost < bestCost) {
+          bestCost = cost;
+          bestIdx = candidateIndex;
+        }
+      }
+
+      if (bestIdx !== selectedIndices[cellIndex]) {
+        selectedIndices[cellIndex] = bestIdx;
+        selected[cellIndex] = pool[bestIdx];
+        changed = true;
+      }
+
+      visitCount++;
+      if ((visitCount & 127) === 0) {
+        await yieldToUI(shouldCancel);
+      }
+    }
+    if (!changed) break;
+    await yieldToUI(shouldCancel);
+  }
+
+  return { selectedIndices, selected };
+}
+
+function runJsRefinementPasses(
+  candidatePools: ScreenCandidate[][],
+  selectedIndices: Int32Array,
+  selected: ScreenCandidate[],
+  analysis: SourceAnalysis,
+  metrics: PaletteMetricData
+) {
+  runColorCoherencePass(candidatePools, selectedIndices, selected, analysis, metrics);
+  runEdgeContinuityPass(candidatePools, selectedIndices, selected, analysis, metrics);
+}
+
 function trySolveScreenWithKernel(
   candidatePools: ScreenCandidate[][],
   analysis: SourceAnalysis,
+  metrics: PaletteMetricData,
   wasmKernel?: StandardCandidateScoringKernel
 ): { selectedIndices: Int32Array; selected: ScreenCandidate[]; refinementInKernel: boolean } | null {
   if (!wasmKernel?.solveSelectionWithNeighborPasses) {
     return null;
   }
 
+  wasmKernel.prepareSolvePairDiff?.(metrics.pairDiff);
   populateSolveScratchFromCandidatePools(candidatePools);
 
   const wasmSelectedIndices = wasmKernel.solveSelectionWithNeighborPasses(
@@ -2951,14 +3034,8 @@ function trySolveScreenWithKernel(
       )
     : wasmSelectedIndices;
 
-  const selectedIndices = new Int32Array(CELL_COUNT);
-  const selected = new Array<ScreenCandidate>(CELL_COUNT);
-  for (let cellIndex = 0; cellIndex < CELL_COUNT; cellIndex++) {
-    const pool = candidatePools[cellIndex];
-    const selectedIndex = Math.min(pool.length - 1, refinedSelectedIndices[cellIndex] ?? 0);
-    selectedIndices[cellIndex] = selectedIndex;
-    selected[cellIndex] = pool[selectedIndex];
-  }
+  const selectedIndices = new Int32Array(refinedSelectedIndices);
+  const selected = materializeSelectedCandidatesFromPools(candidatePools, selectedIndices);
 
   return {
     selectedIndices,
@@ -2975,7 +3052,7 @@ async function solveScreen(
   wasmKernel?: StandardCandidateScoringKernel
 ): Promise<PetsciiResult & { selected: ScreenCandidate[] }> {
   // Try WASM-accelerated solve+refine first
-  const wasmResult = trySolveScreenWithKernel(candidatePools, analysis, wasmKernel);
+  const wasmResult = trySolveScreenWithKernel(candidatePools, analysis, metrics, wasmKernel);
 
   let selectedIndices: Int32Array;
   let selected: ScreenCandidate[];
@@ -2986,53 +3063,19 @@ async function solveScreen(
     selected = wasmResult.selected;
     refinementDone = wasmResult.refinementInKernel;
   } else {
-    // JS fallback: seed + iterative neighbor solve
-    const seededSelection = seedSelectionWithBrightnessDebt(candidatePools);
-    selectedIndices = seededSelection.selectedIndices;
-    selected = seededSelection.selected;
-
-    for (let pass = 0; pass < SCREEN_SOLVE_PASSES; pass++) {
-      let changed = false;
-      const start = pass % 2 === 0 ? 0 : CELL_COUNT - 1;
-      const end = pass % 2 === 0 ? CELL_COUNT : -1;
-      const step = pass % 2 === 0 ? 1 : -1;
-      let visitCount = 0;
-
-      for (let cellIndex = start; cellIndex !== end; cellIndex += step) {
-        const pool = candidatePools[cellIndex];
-        let bestIdx = selectedIndices[cellIndex];
-        let bestCost = Infinity;
-
-        for (let candidateIndex = 0; candidateIndex < pool.length; candidateIndex++) {
-          const candidate = pool[candidateIndex];
-          const cost = computeCellCost(cellIndex, candidate, selected, metrics, analysis);
-
-          if (cost < bestCost) {
-            bestCost = cost;
-            bestIdx = candidateIndex;
-          }
-        }
-
-        if (bestIdx !== selectedIndices[cellIndex]) {
-          selectedIndices[cellIndex] = bestIdx;
-          selected[cellIndex] = pool[bestIdx];
-          changed = true;
-        }
-
-        visitCount++;
-        if ((visitCount & 127) === 0) {
-          await yieldToUI(shouldCancel);
-        }
-      }
-      if (!changed) break;
-      await yieldToUI(shouldCancel);
-    }
+    const jsNeighborSelection = await runJsNeighborSolvePasses(
+      candidatePools,
+      analysis,
+      metrics,
+      shouldCancel
+    );
+    selectedIndices = jsNeighborSelection.selectedIndices;
+    selected = jsNeighborSelection.selected;
   }
 
   // JS refinement passes (skipped if WASM already handled them)
   if (!refinementDone) {
-    runColorCoherencePass(candidatePools, selectedIndices, selected, analysis, metrics);
-    runEdgeContinuityPass(candidatePools, selectedIndices, selected, analysis, metrics);
+    runJsRefinementPasses(candidatePools, selectedIndices, selected, analysis, metrics);
   }
 
   if (wasmKernel?.finalizeSelection) {
@@ -4413,6 +4456,7 @@ async function solveMcmForCombo(
     let solved: PetsciiResult & { selected: ScreenCandidate[] };
     if (ENABLE_WASM_DIAGNOSTICS && mcmWasmSolveKernel && mcmSolveScreenChecksRemaining > 0) {
       mcmSolveScreenChecksRemaining--;
+      mcmWasmSolveKernel.prepareSolvePairDiff?.(metrics.pairDiff);
       populateSolveScratchFromCandidatePools(candidatePools);
       const jsSeed = seedSelectionWithBrightnessDebt(candidatePools);
       const wasmSeedIndices = mcmWasmSolveKernel.solveSelectionWithNeighborPasses(
@@ -4434,19 +4478,74 @@ async function solveMcmForCombo(
         analysis.vBoundaryMeans,
         0
       );
-      const wasmSeed = new Array<ScreenCandidate>(CELL_COUNT);
-      for (let seedCellIndex = 0; seedCellIndex < CELL_COUNT; seedCellIndex++) {
-        const pool = candidatePools[seedCellIndex];
-        const selectedIndex = Math.min(pool.length - 1, wasmSeedIndices[seedCellIndex] ?? 0);
-        wasmSeed[seedCellIndex] = pool[selectedIndex];
-      }
+      const wasmSeed = materializeSelectedCandidatesFromPools(candidatePools, wasmSeedIndices);
       const seedDiffIndex = compareSelectedCandidates('MCM solveScreen seed parity', jsSeed.selected, wasmSeed);
       if (seedDiffIndex >= 0) {
         logSeedDecisionDiagnostics(seedDiffIndex, candidatePools);
       }
-      const jsSolved = await solveScreen(candidatePools, analysis, metrics, shouldCancel, undefined);
+
+      const jsNeighbor = await runJsNeighborSolvePasses(
+        candidatePools,
+        analysis,
+        metrics,
+        shouldCancel,
+        jsSeed
+      );
+      const wasmNeighborIndices = mcmWasmSolveKernel.solveSelectionWithNeighborPasses(
+        _ecmSolveCounts,
+        _ecmSolveChars,
+        _ecmSolveFgs,
+        _ecmSolveVariants,
+        _ecmSolveBaseErrors,
+        _ecmSolveBrightnessResiduals,
+        _ecmSolveRepeatH,
+        _ecmSolveRepeatV,
+        _ecmSolveEdgeLeft,
+        _ecmSolveEdgeRight,
+        _ecmSolveEdgeTop,
+        _ecmSolveEdgeBottom,
+        analysis.hBoundaryDiffs,
+        analysis.vBoundaryDiffs,
+        analysis.hBoundaryMeans,
+        analysis.vBoundaryMeans,
+        SCREEN_SOLVE_PASSES
+      );
+      const wasmNeighbor = materializeSelectedCandidatesFromPools(candidatePools, wasmNeighborIndices);
+      const neighborDiffIndex = compareSelectedCandidates(
+        'MCM solveScreen neighbor parity',
+        jsNeighbor.selected,
+        wasmNeighbor
+      );
+
+      if (neighborDiffIndex < 0 && mcmWasmSolveKernel.refineSelectionWithPostPasses) {
+        const jsRefinedIndices = new Int32Array(jsNeighbor.selectedIndices);
+        const jsRefined = jsNeighbor.selected.slice();
+        runJsRefinementPasses(candidatePools, jsRefinedIndices, jsRefined, analysis, metrics);
+
+        const wasmRefinedIndices = mcmWasmSolveKernel.refineSelectionWithPostPasses(
+          wasmNeighborIndices,
+          _ecmSolveCoherenceColorMasks,
+          _ecmSolveGlyphDirections,
+          analysis.detailScores,
+          analysis.gradientDirections,
+          COLOR_COHERENCE_PASSES,
+          EDGE_CONTINUITY_PASSES
+        );
+        const wasmRefined = materializeSelectedCandidatesFromPools(candidatePools, wasmRefinedIndices);
+        const refineDiffIndex = compareSelectedCandidates(
+          'MCM solveScreen refine parity',
+          jsRefined,
+          wasmRefined
+        );
+
+        if (refineDiffIndex < 0) {
+          const jsSolved = await solveScreen(candidatePools, analysis, metrics, shouldCancel, undefined);
+          const wasmSolved = await solveScreen(candidatePools, analysis, metrics, shouldCancel, mcmWasmSolveKernel);
+          compareSolvedScreenResults('MCM solveScreen parity', jsSolved, wasmSolved);
+        }
+      }
+
       const wasmSolved = await solveScreen(candidatePools, analysis, metrics, shouldCancel, mcmWasmSolveKernel);
-      compareSolvedScreenResults('MCM solveScreen parity', jsSolved, wasmSolved);
       solved = wasmSolved;
     } else {
       solved = await solveScreen(candidatePools, analysis, metrics, shouldCancel, mcmWasmSolveKernel);
