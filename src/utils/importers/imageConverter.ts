@@ -3411,8 +3411,12 @@ async function solveMcmForCombo(
   palette: PaletteColor[] | undefined,
   scoringKernel: McmCandidateScoringKernel | undefined,
   onProgress: ProgressCallback,
-  shouldCancel?: () => boolean
+  shouldCancel?: () => boolean,
+  binaryScoringKernel?: BinaryCandidateScoringKernel
 ): Promise<SolvedModeCandidate> {
+  // The binary scoring kernel is a BinaryWasmKernel at runtime which also
+  // implements StandardCandidateScoringKernel (solve/refine methods).
+  const mcmWasmSolveKernel = binaryScoringKernel as unknown as StandardCandidateScoringKernel | undefined;
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const sampleIndices = getSampleIndices(analysis.rankedIndices, MCM_SAMPLE_COUNT);
   const tGlobals0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -3516,7 +3520,7 @@ async function solveMcmForCombo(
         );
     poolTime += (typeof performance !== 'undefined' ? performance.now() : Date.now()) - tPool0;
     const tSolve0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    const solved = await solveScreen(candidatePools, analysis, metrics, shouldCancel);
+    const solved = await solveScreen(candidatePools, analysis, metrics, shouldCancel, mcmWasmSolveKernel);
     solveTime += (typeof performance !== 'undefined' ? performance.now() : Date.now()) - tSolve0;
     const conversion: ConversionResult = {
       screencodes: solved.screencodes,
@@ -3576,7 +3580,7 @@ async function solveModeForAnalysis(
     );
     const solved = mode === 'ecm'
       ? await solveEcmForCombo(analysis, context, metrics, settings, undefined, binaryScoringKernel, charsetProgress, shouldCancel)
-      : await solveMcmForCombo(analysis, context, metrics, settings, undefined, mcmScoringKernel, charsetProgress, shouldCancel);
+      : await solveMcmForCombo(analysis, context, metrics, settings, undefined, mcmScoringKernel, charsetProgress, shouldCancel, binaryScoringKernel);
     solved.conversion.charset = charset;
     solved.conversion.accelerationBackend = backend;
     best = pickBetterModeCandidate(best, solved);

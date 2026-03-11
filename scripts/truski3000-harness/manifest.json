@@ -2,27 +2,27 @@
   "scenarios": [
     {
       "fixture": "skeletor.png",
-      "modes": ["standard", "ecm"]
+      "modes": ["standard", "ecm", "mcm"]
     },
     {
       "fixture": "ninja-a.png",
-      "modes": ["standard", "ecm"]
+      "modes": ["standard", "ecm", "mcm"]
     },
     {
       "fixture": "slayer_multi_color.png",
-      "modes": ["standard", "ecm"]
+      "modes": ["standard", "ecm", "mcm"]
     },
     {
       "fixture": "house-a.png",
-      "modes": ["standard", "ecm"]
+      "modes": ["standard", "ecm", "mcm"]
     },
     {
       "fixture": "doggy.png",
-      "modes": ["standard", "ecm"]
+      "modes": ["standard", "ecm", "mcm"]
     },
     {
       "fixture": "petsciishop_logo.png",
-      "modes": ["standard", "ecm"]
+      "modes": ["standard", "ecm", "mcm"]
     }
   ]
 }

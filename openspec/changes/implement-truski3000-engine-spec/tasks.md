@@ -39,7 +39,7 @@
 - [x] 6.1e Port Standard screen solve passes and refinement to WASM
 - [x] 6.1f Validate Standard parity + timing against the six-fixture accepted Standard baseline set before switching any default path
   - Current exact benchmark on the six Standard fixtures: `182676.9ms` JS-only vs `32707.4ms` WASM-only = **82.10% faster** overall (`5.59x`)
-- [ ] 6.2 Move the ECM and MCM full solver cores into WASM — ECM screen solve + refinement now WASM (85.8% faster per solve, 2.6x per combo); MCM solve still JS
+- [x] 6.2 Move the ECM and MCM full solver cores into WASM — ECM solve 85.8% faster (2.6x per combo), MCM solve 82.4% faster (1.3x per combo)
 - [ ] 6.3 Keep conversion state resident in WASM memory — source planes, glyph metadata, distance LUTs, and working buffers remain in linear memory across a conversion
 - [ ] 6.4 Reduce JS to orchestration/UI responsibilities — progress events and compact result buffers come back from WASM while fallback JS solver paths are reduced over time
 

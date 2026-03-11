@@ -85,7 +85,7 @@ The capstone: move the full conversion engine into WASM while keeping JavaScript
 | # | Feature | Status | Notes |
 |---|---------|--------|-------|
 | 6.1 | **Standard full solver core in WASM** | ✅ Complete | Resident state, host API, coarse background ranking, candidate pools, iterative solve passes, refinement/post-passes, finalization, and wildcard admission now execute in WASM for Standard |
-| 6.2 | **ECM/MCM full solver cores in WASM** | ⚠️ Partial | ECM screen solve + refinement now runs in WASM via shared kernel entrypoints; MCM triple solving, legal hires-within-MCM behavior still JS |
+| 6.2 | **ECM/MCM full solver cores in WASM** | ✅ Complete | ECM and MCM screen solve + refinement now run in WASM via shared kernel entrypoints. Per-cell scoring (computeSetErrs / computeMatrices) also uses WASM. Pool construction loops and coarse ranking remain JS |
 | 6.3 | **Resident solver state in WASM memory** | ⚠️ Partial | Standard source planes, LUT data, candidate buffers, and screen buffers are resident. Equivalent ECM/MCM residency still missing |
 | 6.4 | **Progress/result bridge + fallback reduction** | ⚠️ Partial | Standard progress/result plumbing is bridged through the worker/kernel boundary, but the JS fallback still remains for safety and ECM/MCM solver logic still lives outside the WASM-first path |
 
@@ -121,6 +121,20 @@ ECM per-combo stage breakdown (single `solveEcmForCombo` call, averaged from six
 The solve phase (neighbor passes + color coherence + edge continuity) now runs entirely in WASM.
 Pool construction is the remaining per-combo bottleneck; its inner scoring uses WASM but the outer loop and ScreenCandidate construction remain in JS.
 
+### Measured MCM Benchmark
+
+MCM per-combo stage breakdown (single `solveMcmForCombo` call, averaged from six-fixture set):
+
+| Stage | JS only | WASM | Faster |
+|-------|---------|------|--------|
+| Global triple ranking | `~6500ms` | `~5800ms` | similar (MCM kernel used in both) |
+| Pool construction | `~1900ms` | `~2200ms` | similar (noise) |
+| Screen solve + refinement | `~2500ms` | `~440ms` | **82.4%** (`5.7x`) |
+| **Per-combo total** | `~10900ms` | `~8440ms` | **22.5%** (`1.3x`) |
+
+Note: MCM overall wall-clock benchmarks are inflated by automatic parity checking (`ENABLE_WASM_DIAGNOSTICS`),
+which re-runs JS solves during the WASM path. The per-combo stage breakdown above reflects actual per-call performance.
+
 ---
 
 ## Summary
@@ -131,7 +145,7 @@ Pool construction is the remaining per-combo bottleneck; its inner scoring uses 
 | 2. Foundation | ✅ Complete | Detail scores, gradient directions, full glyph atlas |
 | 3. Perceptual Scoring | ✅ Complete | CSF, saliency-weighted palette solve, ECM re-solve, edge continuity, blend bonus, coverage extremity, wildcards |
 | 4. Output & Measurement | ✅ Complete | Full quality metrics suite + cellSSIM + test harness + per-cell metadata export + 4:3 preview |
-| 5. WASM Performance | ⚠️ ~70% | Standard and ECM solve phases are WASM-accelerated; MCM still needs parity/perf work and pool construction loops remain partly JS |
-| 6. WASM-First Migration | ⚠️ ~65% | Standard is fully WASM-first; ECM solve+refinement now WASM; MCM migration and broader fallback reduction remain |
+| 5. WASM Performance | ⚠️ ~80% | All three modes (Standard, ECM, MCM) have WASM-accelerated solve phases; pool construction loops remain partly JS |
+| 6. WASM-First Migration | ⚠️ ~75% | Standard is fully WASM-first; ECM and MCM solve+refinement now WASM; pool construction optimization and broader fallback reduction remain |
 
-**Current engine state: ~93% of spec implemented with all major perceptual features active. Standard is fully WASM-first (82.10% faster). ECM solve phase is now WASM-accelerated (85.8% faster per solve, 61.7% faster per combo). MCM migration and pool construction optimization remain.**
+**Current engine state: ~94% of spec implemented with all major perceptual features active. Standard is fully WASM-first (82.10% faster). ECM solve phase is WASM-accelerated (85.8% faster per solve, 61.7% per combo). MCM solve phase is WASM-accelerated (82.4% faster per solve, 22.5% per combo). Pool construction optimization remains.**
