@@ -182,6 +182,17 @@ All constants in `imageConverterStandardCore.ts`:
   - overused vs ideal: `black`, `dgray`, `mgray`
 - Operational rule going forward: refresh `doggy` / `house-a` ECM baselines deliberately as accepted quality improvements, not as regression fixes, and preserve this provenance note so future benchmark work does not misclassify them.
 
+### CODEX: MCM skeletor baseline provenance (2026-03-11)
+- The explicit-backend milestone sweep flagged `mcm/skeletor`, but the failure is not a WASM transport or worker bug. Current `js` and current `wasm` are parity-clean and land on the same newer result: `upper`, bg `11`, shared `[10,12]`, `qualityMeanDeltaE 0.140578`.
+- The biggest source of drift is tuning-profile provenance, not backend divergence. Running current HEAD with the pre-`c889703` UI profile (`brightnessFactor 1.1`, `saturationFactor 1.4`, `saliencyAlpha 3`, `lumMatchWeight 12`, `csfWeight 10`) shifts `skeletor` to `upper`, bg `0`, shared `[11,9]`, which restores most of the older hood/palette identity.
+- Reinstating the pre-`c889703` scoring constants on top of that old profile reproduces the accepted MCM baseline exactly: `lower`, bg `7`, shared `[0,9]`, `qualityMeanDeltaE 0.1561526239406585`, preview hash `d6aaff887bb8b7f6177e16fac4c05108b8cee47d9a0cce0665402db8c4803284`.
+- The constants required to reproduce that baseline were:
+  - `LUMA_ERROR_WEIGHT = 1.55`
+  - `CHROMA_ERROR_WEIGHT = 0.85`
+  - `MCM_HIRES_COLOR_PENALTY_WEIGHT = 4.0`
+  - `MCM_MULTICOLOR_USAGE_BONUS_WEIGHT = 4.0`
+- Operational rule going forward: do not treat `skeletor` MCM compare drift against that stored baseline as evidence of a recent WASM regression unless the effective tuning profile and objective constants are held fixed. Baselines need settings/objective provenance before they are used as regression gates.
+
 ### Next: MCM Quality Tuning (port Standard innovations + MCM-specific)
 
 **Shared with ECM** (same changes benefit both — items 1, 3 above apply to MCM's hires-within-MCM candidates too):
@@ -199,6 +210,7 @@ All constants in `imageConverterStandardCore.ts`:
 13. **ECM/MCM full solver cores in WASM** — **DONE**. Both ECM and MCM screen solve + refinement (neighbor passes, color coherence, edge continuity) now run in WASM via shared kernel entrypoints. ECM per-combo solve: 85.8% faster (7.0x), per-combo total: 61.7% faster (2.6x). MCM per-combo solve: 82.4% faster (5.7x), per-combo total: 22.5% faster (1.3x)
 14. **Resident solver state in WASM memory** — **DONE**. Standard source planes, pairDiff/LUT data, candidate buffers, and screen-state buffers stay resident per request, and ECM/MCM now upload per-offset cell error tables once so the kernels read resident cell buffers by `cellIndex` rather than copying one cell at a time from JS
 15. **Progress/result bridge + JS fallback reduction** — **PARTIAL**. Standard progress/result bridging exists, ECM pool construction/finalization is parity-clean on the WASM-first path, MCM triple ranking plus per-cell candidate-pool construction stay on the WASM-first path, and mode workers now return transferable typed result buffers plus structured progress checkpoints so the main thread assembles the final `ConversionResult`. The old `auto` backend selection has been removed, `js` is now an explicit reference/debug path, requested `wasm` no longer silently downgrades to JS, and the Image Converter modal now surfaces explicit `wasm` failures with a manual `js` fallback hint. The remaining work is shrinking the last legacy/debug fallback paths
+   - Harness provenance is now explicit: `summary.json` records `profileId`, effective settings, and an objective fingerprint, `compare` classifies provenance mismatches separately from backend regressions, and `capture --profile ...` can generate controlled profile artifacts without baseline gating
 
 ### Performance (Phase 5 groundwork)
 16. **WASM kernel performance** — Standard is now materially faster on the WASM-first path. Exact benchmark on the accepted six-fixture Standard set:

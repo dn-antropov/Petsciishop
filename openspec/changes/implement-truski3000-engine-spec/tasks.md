@@ -49,6 +49,8 @@
   - CODEX update (2026-03-11): removed the old `auto` backend mode, made `js` the explicit reference path, and stopped silent `wasm -> js` worker downgrades in the normal conversion/harness flow. Stable canaries passed for ECM `ninja-a` (`js` and `wasm`) and MCM `slayer_multi_color` (`wasm`).
   - CODEX update (2026-03-11): the Image Converter modal now surfaces explicit `wasm` failures to the user and points them to the manual `js` fallback instead of failing only in the console.
   - CODEX update (2026-03-11): refreshed the accepted ECM baselines for `doggy` and `house-a` after targeted explicit `js` vs `wasm` parity passed on both fixtures. The broader explicit-backend milestone sweep remains a separate gate.
+  - CODEX update (2026-03-11): harness `summary.json` now records `profileId`, effective settings, and an objective fingerprint, and `compare` now classifies provenance mismatches explicitly instead of folding them into fake backend regressions. Added `--profile` selection plus `capture` mode for controlled profile evaluation without baseline gating.
+  - CODEX provenance note (2026-03-11): the `mcm/skeletor` sweep failure is not a recent WASM regression. Current `js` and `wasm` are parity-clean on the newer `upper`, bg `11`, shared `[10,12]` result. The stored baseline came from the older pre-`c889703` tuning stack; restoring the old UI profile moves `skeletor` back toward `upper`, bg `0`, shared `[11,9]`, and restoring the old scoring constants on top of that reproduces the accepted baseline exactly (`lower`, bg `7`, shared `[0,9]`). Hold tuning settings/objective constants fixed before using `skeletor` MCM compare as a backend regression gate.
 
 CODEX: Phase 6 execution policy:
 - Use targeted canary validation while iterating on a slice, not the full fixture matrix.
@@ -56,6 +58,7 @@ CODEX: Phase 6 execution policy:
 - Run full mode sweeps only at milestone gates (`6.1f`, the equivalent ECM/MCM parity gates, or before changing default backend behavior).
 - Do not accept a speed win if accepted quality baselines move unexpectedly.
 - ECM provenance note (2026-03-11): stored ECM baselines for `doggy` and `house-a` are stale artifacts. Current JS/WASM-parity-clean outputs are preferred. `doggy` improved in two historical waves: `16a8b33` / `daf9d14` recovered ECM candidate-pool quality, and `59bc36e` is the first commit that matches the current accepted `doggy` output exactly. Refresh those baselines deliberately rather than treating them as regressions from `6.4` work.
+- MCM provenance note (2026-03-11): stored `skeletor` MCM reflects the old pre-`c889703` tuning profile plus the old MCM objective constants. Do not classify current `skeletor` drift as a WASM/backend regression unless settings and scoring constants are pinned first.
 
 CODEX: Manual mode choice remains authoritative. Cross-mode ranking, recommendation, and automatic mode selection are out of scope for this change.
 CODEX: Preserve and document legal per-cell hires-versus-multicolor behavior within the MCM path; do not regress or misclassify it as forbidden mixed-mode output.

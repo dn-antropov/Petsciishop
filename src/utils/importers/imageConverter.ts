@@ -286,6 +286,37 @@ export const CONVERTER_DEFAULTS: ConverterSettings = {
   outputMcm: false,
 };
 
+export const CONVERTER_OBJECTIVE_SIGNATURE = {
+  ecmSampleCount: ECM_SAMPLE_COUNT,
+  mcmSampleCount: MCM_SAMPLE_COUNT,
+  ecmFinalistCount: ECM_FINALIST_COUNT,
+  mcmFinalistCount: MCM_FINALIST_COUNT,
+  ecmPoolSize: ECM_POOL_SIZE,
+  mcmPoolSize: MCM_POOL_SIZE,
+  screenSolvePasses: SCREEN_SOLVE_PASSES,
+  lumaErrorWeight: LUMA_ERROR_WEIGHT,
+  chromaErrorWeight: CHROMA_ERROR_WEIGHT,
+  edgeMismatchWeight: EDGE_MISMATCH_WEIGHT,
+  repeatPenalty: REPEAT_PENALTY,
+  continuityPenalty: CONTINUITY_PENALTY,
+  modeSwitchPenalty: MODE_SWITCH_PENALTY,
+  modeSwitchDiffThreshold: MODE_SWITCH_DIFF_THRESHOLD,
+  brightnessDebtWeight: BRIGHTNESS_DEBT_WEIGHT,
+  brightnessDebtDecay: BRIGHTNESS_DEBT_DECAY,
+  brightnessDebtClamp: BRIGHTNESS_DEBT_CLAMP,
+  colorCoherenceMaxDelta: COLOR_COHERENCE_MAX_DELTA,
+  colorCoherencePasses: COLOR_COHERENCE_PASSES,
+  edgeContinuityMaxDelta: EDGE_CONTINUITY_MAX_DELTA,
+  edgeContinuityPasses: EDGE_CONTINUITY_PASSES,
+  ecmRegisterResolvePasses: ECM_REGISTER_RESOLVE_PASSES,
+  ecmRegisterKmeansIterations: ECM_REGISTER_KMEANS_ITERATIONS,
+  ecmRegisterResolveErrorScale: ECM_REGISTER_RESOLVE_ERROR_SCALE,
+  mcmHiresColorPenaltyWeight: MCM_HIRES_COLOR_PENALTY_WEIGHT,
+  mcmMulticolorUsageBonusWeight: MCM_MULTICOLOR_USAGE_BONUS_WEIGHT,
+} as const;
+
+export type ConverterObjectiveSignature = typeof CONVERTER_OBJECTIVE_SIGNATURE;
+
 export const CONVERTER_PRESETS = [
   {
     id: 'true-neutral',

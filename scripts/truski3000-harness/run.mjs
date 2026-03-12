@@ -31,10 +31,10 @@ const backendLogPrefix = '[TRUSKI_BACKEND] ';
 const validAccelerationModes = ['wasm', 'js'];
 
 const command = process.argv[2] ?? 'compare';
-const validCommands = new Set(['record', 'compare', 'benchmark', 'parity', 'validate']);
+const validCommands = new Set(['record', 'compare', 'capture', 'benchmark', 'parity', 'validate']);
 if (!validCommands.has(command)) {
   console.error(`Unknown command: ${command}`);
-  console.error('Usage: node scripts/truski3000-harness/run.mjs [record|compare|benchmark|parity|validate]');
+  console.error('Usage: node scripts/truski3000-harness/run.mjs [record|compare|capture|benchmark|parity|validate]');
   process.exit(1);
 }
 
@@ -43,6 +43,8 @@ const fixtureFilterIndex = process.argv.indexOf('--fixture');
 const fixtureFilter = fixtureFilterIndex >= 0 ? process.argv[fixtureFilterIndex + 1] ?? null : null;
 const modeFilterIndex = process.argv.indexOf('--mode');
 const modeFilter = modeFilterIndex >= 0 ? process.argv[modeFilterIndex + 1] ?? null : null;
+const profileFilterIndex = process.argv.indexOf('--profile');
+const profileFilter = profileFilterIndex >= 0 ? process.argv[profileFilterIndex + 1] ?? null : null;
 const presetFilterIndex = process.argv.indexOf('--preset');
 const presetFilter = presetFilterIndex >= 0 ? process.argv[presetFilterIndex + 1] ?? null : null;
 const accelerationFilterIndex = process.argv.indexOf('--acceleration');
@@ -79,13 +81,29 @@ const modeMatrix = {
   },
 };
 
-const benchmarkProfiles = [
+const harnessProfiles = [
   {
-    id: 'default',
+    id: 'current-defaults',
+    label: 'Current Defaults',
     settings: {},
   },
   {
+    id: 'robs-favorite',
+    label: "Rob's Favorite",
+    settings: {
+      brightnessFactor: 1.1,
+      saturationFactor: 1.4,
+      saliencyAlpha: 3.0,
+      lumMatchWeight: 12,
+      csfWeight: 10,
+      includeTypographic: true,
+      paletteId: 'colodore',
+      manualBgColor: null,
+    },
+  },
+  {
     id: 'true-neutral',
+    label: 'True Neutral',
     settings: {
       brightnessFactor: 1.0,
       saturationFactor: 1.0,
@@ -98,6 +116,37 @@ const benchmarkProfiles = [
     },
   },
 ];
+
+const benchmarkProfiles = [
+  {
+    id: 'default',
+    profileId: 'current-defaults',
+  },
+  {
+    id: 'robs-favorite',
+    profileId: 'robs-favorite',
+  },
+  {
+    id: 'true-neutral',
+    profileId: 'true-neutral',
+  },
+];
+
+function getHarnessProfile(profileId = 'current-defaults') {
+  return harnessProfiles.find(profile => profile.id === profileId) ?? null;
+}
+
+function resolveScenarioSettings(modeSettings, profileId = 'current-defaults', extraOverrides = {}) {
+  const profile = getHarnessProfile(profileId);
+  if (!profile) {
+    throw new Error(`Unknown harness profile: ${profileId}`);
+  }
+  return {
+    ...profile.settings,
+    ...modeSettings,
+    ...extraOverrides,
+  };
+}
 
 function modeIds() {
   return Object.keys(modeMatrix);
@@ -266,6 +315,9 @@ async function listScenarios() {
   if (modeFilter && !modeIds().includes(modeFilter)) {
     throw new Error(`Harness mode filter is invalid: ${modeFilter}`);
   }
+  if (profileFilter && !getHarnessProfile(profileFilter)) {
+    throw new Error(`Unknown harness profile: ${profileFilter}`);
+  }
   if (accelerationFilter && !validAccelerationModes.includes(accelerationFilter)) {
     throw new Error(`Unknown acceleration mode: ${accelerationFilter}`);
   }
@@ -315,9 +367,9 @@ async function writeRunArtifacts(result) {
   }
 }
 
-async function runHarnessFixture(page, fixtureName, settings, accelerationMode = 'wasm') {
+async function runHarnessFixture(page, fixtureName, settings, accelerationMode = 'wasm', profileId = null) {
   const evaluatePromise = page.evaluate(
-    async ({ nextFixtureName, modeSettings, nextAccelerationMode }) => {
+    async ({ nextFixtureName, modeSettings, nextAccelerationMode, nextProfileId }) => {
       if (!window.__TRUSKI_HARNESS__) {
         throw new Error('Harness API is not available on window');
       }
@@ -325,12 +377,14 @@ async function runHarnessFixture(page, fixtureName, settings, accelerationMode =
         fixture: nextFixtureName,
         settings: modeSettings,
         accelerationMode: nextAccelerationMode,
+        profileId: nextProfileId,
       });
     },
     {
       nextFixtureName: fixtureName,
       modeSettings: settings,
       nextAccelerationMode: accelerationMode,
+      nextProfileId: profileId,
     }
   );
 
@@ -405,6 +459,8 @@ async function runBenchmarks(page, scenarios) {
   const benchmarkResults = [];
   const profiles = presetFilter
     ? benchmarkProfiles.filter(profile => profile.id === presetFilter)
+    : profileFilter
+    ? benchmarkProfiles.filter(profile => profile.profileId === profileFilter)
     : benchmarkProfiles;
   const accelerationModes = accelerationFilter
     ? validAccelerationModes.filter(mode => mode === accelerationFilter)
@@ -413,13 +469,17 @@ async function runBenchmarks(page, scenarios) {
   if (presetFilter && profiles.length === 0) {
     throw new Error(`Unknown benchmark preset: ${presetFilter}`);
   }
+  if (!presetFilter && profileFilter && profiles.length === 0) {
+    throw new Error(`No benchmark presets map to harness profile: ${profileFilter}`);
+  }
 
   for (const profile of profiles) {
+    const resolvedProfile = getHarnessProfile(profile.profileId);
+    if (!resolvedProfile) {
+      throw new Error(`Unknown harness profile for benchmark preset ${profile.id}: ${profile.profileId}`);
+    }
     for (const scenario of scenarios) {
-      const scenarioSettings = {
-        ...profile.settings,
-        ...modeMatrix[scenario.mode],
-      };
+      const scenarioSettings = resolveScenarioSettings(modeMatrix[scenario.mode], profile.profileId);
 
       for (const accelerationMode of accelerationModes) {
         console.log(
@@ -427,12 +487,18 @@ async function runBenchmarks(page, scenarios) {
           `${scenario.mode} ${scenario.fixture} (${benchmarkIterations} iterations)`
         );
 
-        await runHarnessFixture(page, scenario.fixture, scenarioSettings, accelerationMode);
+        await runHarnessFixture(page, scenario.fixture, scenarioSettings, accelerationMode, resolvedProfile.id);
         const samples = [];
         let backendByMode = {};
 
         for (let iteration = 0; iteration < benchmarkIterations; iteration++) {
-          const result = await runHarnessFixture(page, scenario.fixture, scenarioSettings, accelerationMode);
+          const result = await runHarnessFixture(
+            page,
+            scenario.fixture,
+            scenarioSettings,
+            accelerationMode,
+            resolvedProfile.id
+          );
           samples.push(result.elapsedMs);
           backendByMode = result.backendByMode;
         }
@@ -469,13 +535,14 @@ async function runBenchmarks(page, scenarios) {
 async function runBackendParity(page, scenarios) {
   const parityResults = [];
   const failures = [];
+  const profileId = profileFilter ?? 'current-defaults';
 
   for (const scenario of scenarios) {
-    const settings = modeMatrix[scenario.mode];
-    console.log(`Parity ${scenario.mode} -> ${scenario.fixture} [JS ONLY vs WASM ONLY]`);
+    const settings = resolveScenarioSettings(modeMatrix[scenario.mode], profileId);
+    console.log(`Parity ${scenario.mode} -> ${scenario.fixture} [JS ONLY vs WASM ONLY] profile=${profileId}`);
 
-    const jsResult = await runHarnessFixture(page, scenario.fixture, settings, 'js');
-    const wasmResult = await runHarnessFixture(page, scenario.fixture, settings, 'wasm');
+    const jsResult = await runHarnessFixture(page, scenario.fixture, settings, 'js', profileId);
+    const wasmResult = await runHarnessFixture(page, scenario.fixture, settings, 'wasm', profileId);
     const jsSummary = jsResult.summaries[scenario.mode];
     const wasmSummary = wasmResult.summaries[scenario.mode];
     const jsPreview = jsResult.previews[scenario.mode];
@@ -717,6 +784,64 @@ function stripVolatileSummaryFields(summary) {
   return stable;
 }
 
+function summarizeSettingsForDisplay(settings) {
+  if (!settings) return 'unknown';
+  return [
+    `b=${settings.brightnessFactor}`,
+    `s=${settings.saturationFactor}`,
+    `sal=${settings.saliencyAlpha}`,
+    `lum=${settings.lumMatchWeight}`,
+    `csf=${settings.csfWeight}`,
+    settings.includeTypographic ? 'typo=on' : 'typo=off',
+    `palette=${settings.paletteId}`,
+    `manualBg=${settings.manualBgColor == null ? 'auto' : settings.manualBgColor}`,
+  ].join(' ');
+}
+
+function extractSummaryProvenance(summary) {
+  if (!summary) return null;
+  return {
+    profileId: summary.profileId ?? null,
+    effectiveSettings: summary.effectiveSettings ?? null,
+    settingsFingerprint: summary.settingsFingerprint ?? null,
+    objectiveSignature: summary.objectiveSignature ?? null,
+    objectiveFingerprint: summary.objectiveFingerprint ?? null,
+  };
+}
+
+function compareSummaryProvenance(latestSummary, baselineSummary) {
+  const latest = extractSummaryProvenance(latestSummary);
+  const baseline = extractSummaryProvenance(baselineSummary);
+  if (!latest || !baseline) {
+    return { status: 'missing', detail: 'missing summary provenance' };
+  }
+  if (!latest.settingsFingerprint || !latest.objectiveFingerprint ||
+      !baseline.settingsFingerprint || !baseline.objectiveFingerprint) {
+    return { status: 'legacy', detail: 'baseline or latest summary is missing provenance fingerprints' };
+  }
+  const settingsMatch = latest.settingsFingerprint === baseline.settingsFingerprint;
+  const objectiveMatch = latest.objectiveFingerprint === baseline.objectiveFingerprint;
+  if (settingsMatch && objectiveMatch) {
+    return { status: 'match', detail: 'settings + objective fingerprints match' };
+  }
+
+  const details = [];
+  if (!settingsMatch) {
+    details.push(
+      `settings differ: baseline(${summarizeSettingsForDisplay(baseline.effectiveSettings)}) vs latest(${summarizeSettingsForDisplay(latest.effectiveSettings)})`
+    );
+  }
+  if (!objectiveMatch) {
+    details.push(
+      `objective differs: baseline=${String(baseline.objectiveFingerprint).slice(0, 12)} latest=${String(latest.objectiveFingerprint).slice(0, 12)}`
+    );
+  }
+  return {
+    status: 'mismatch',
+    detail: details.join('; '),
+  };
+}
+
 function formatModeLabel(mode) {
   switch (mode) {
     case 'standard':
@@ -823,6 +948,15 @@ async function generateComparisonHtml(scenarios) {
       if (summary.accelerationMode) {
         s += '<tr><td class="cl">request</td><td>' + formatAccelerationMode(summary.accelerationMode) + '</td></tr>';
       }
+      if (summary.profileId) {
+        s += '<tr><td class="cl">profile</td><td>' + summary.profileId + '</td></tr>';
+      }
+      if (summary.effectiveSettings) {
+        s += '<tr><td class="cl">settings</td><td>' + summarizeSettingsForDisplay(summary.effectiveSettings) + '</td></tr>';
+      }
+      if (summary.objectiveFingerprint) {
+        s += '<tr><td class="cl">objective</td><td>' + String(summary.objectiveFingerprint).slice(0, 12) + '</td></tr>';
+      }
       const q = summary.imageQuality;
       if (q) {
         s += '<tr><td class="cl">SSIM</td><td>' + q.ssim.toFixed(3) + '</td></tr>';
@@ -916,6 +1050,7 @@ async function generateComparisonHtml(scenarios) {
 
 async function compareAgainstBaselines() {
   const failures = [];
+  const warnings = [];
 
   for (const mode of Object.keys(modeMatrix)) {
     const latestModeDir = path.resolve(latestOutputDir, mode);
@@ -943,15 +1078,28 @@ async function compareAgainstBaselines() {
         ]);
         const latestSummary = JSON.parse(latestSummaryBuf.toString('utf8'));
         const baselineSummary = JSON.parse(baselineSummaryBuf.toString('utf8'));
+        const provenance = compareSummaryProvenance(latestSummary, baselineSummary);
+        const provenanceMismatch = provenance.status === 'mismatch';
         const summaryMatches =
           JSON.stringify(stripVolatileSummaryFields(latestSummary)) ===
           JSON.stringify(stripVolatileSummaryFields(baselineSummary));
 
-        if (!summaryMatches) {
-          failures.push(`${mode}/${fixtureName}: summary mismatch`);
+        if (provenanceMismatch) {
+          failures.push(`${mode}/${fixtureName}: provenance mismatch (${provenance.detail}); compare gate invalid`);
+        } else if (!summaryMatches) {
+          const suffix = provenance.status === 'legacy'
+            ? ` (${provenance.detail}; summary mismatch may reflect old baselines rather than a regression)`
+            : '';
+          failures.push(`${mode}/${fixtureName}: summary mismatch${suffix}`);
         }
-        if (!latestPreview.equals(baselinePreview)) {
-          failures.push(`${mode}/${fixtureName}: preview mismatch`);
+        if (!provenanceMismatch && !latestPreview.equals(baselinePreview)) {
+          const suffix = provenance.status === 'legacy'
+            ? ` (${provenance.detail}; preview mismatch may reflect old baselines rather than a regression)`
+            : '';
+          failures.push(`${mode}/${fixtureName}: preview mismatch${suffix}`);
+        }
+        if (provenance.status === 'legacy') {
+          warnings.push(`${mode}/${fixtureName}: ${provenance.detail}`);
         }
 
         // Show quality score changes regardless of pass/fail
@@ -966,8 +1114,14 @@ async function compareAgainstBaselines() {
             const deltaEDelta = lq.meanDeltaE - bq.meanDeltaE;
             const p95Delta = lq.percentile95DeltaE - bq.percentile95DeltaE;
             const timeDelta = (latestSummary.conversionMs ?? 0) - (baselineSummary.conversionMs ?? 0);
-            const changed = !summaryMatches;
-            const tag = changed ? 'CHANGED' : 'OK';
+            const changed = !summaryMatches || !latestPreview.equals(baselinePreview);
+            const tag = provenanceMismatch
+              ? 'PROVENANCE'
+              : provenance.status === 'legacy'
+              ? 'LEGACY'
+              : changed
+              ? 'CHANGED'
+              : 'OK';
             console.log(
               `  ${mode}/${fixtureName} [${tag}]: ` +
               `SSIM (${formatDelta(ssimDelta)}) ` +
@@ -976,7 +1130,8 @@ async function compareAgainstBaselines() {
               `chromaRMSE (${formatDelta(chromaDelta, true)}) ` +
               `meanΔE (${formatDelta(deltaEDelta, true)}) ` +
               `p95ΔE (${formatDelta(p95Delta, true)}) ` +
-              `timeMs (${formatDelta(timeDelta, true)})`
+              `timeMs (${formatDelta(timeDelta, true)})` +
+              (tag === 'PROVENANCE' || tag === 'LEGACY' ? ` provenance=${provenance.detail}` : '')
             );
           }
         } catch {
@@ -985,6 +1140,13 @@ async function compareAgainstBaselines() {
       } catch (error) {
         failures.push(`${mode}/${fixtureName}: missing baseline (${error instanceof Error ? error.message : String(error)})`);
       }
+    }
+  }
+
+  if (warnings.length > 0) {
+    console.warn('TRUSKI3000 harness compare warnings:');
+    for (const warning of warnings) {
+      console.warn(`- ${warning}`);
     }
   }
 
@@ -1085,24 +1247,38 @@ async function main() {
       return;
     }
 
+    const selectedProfileId = profileFilter ?? 'current-defaults';
+    const selectedProfile = getHarnessProfile(selectedProfileId);
+    if (!selectedProfile) {
+      throw new Error(`Unknown harness profile: ${selectedProfileId}`);
+    }
+
     for (const scenario of scenarios) {
-      const settings = { ...modeMatrix[scenario.mode] };
+      const extraOverrides = {};
       if (saliencyOverride !== null && !isNaN(saliencyOverride)) {
-        settings.saliencyAlpha = saliencyOverride;
+        extraOverrides.saliencyAlpha = saliencyOverride;
       }
       if (lumOverride !== null && !isNaN(lumOverride)) {
-        settings.lumMatchWeight = lumOverride;
+        extraOverrides.lumMatchWeight = lumOverride;
       }
       if (csfOverride !== null && !isNaN(csfOverride)) {
-        settings.csfWeight = csfOverride;
+        extraOverrides.csfWeight = csfOverride;
       }
+      const settings = resolveScenarioSettings(modeMatrix[scenario.mode], selectedProfileId, extraOverrides);
       const overrideLabel = [
+        `profile=${selectedProfileId}`,
         saliencyOverride !== null ? `sal=${saliencyOverride}` : '',
         lumOverride !== null ? `lum=${lumOverride}` : '',
         csfOverride !== null ? `csf=${csfOverride}` : '',
       ].filter(Boolean).join(' ');
       console.log(`Running ${scenario.mode} -> ${scenario.fixture} [${formatRequestedAcceleration()}]${overrideLabel ? ' ' + overrideLabel : ''}`);
-      const result = await runHarnessFixture(page, scenario.fixture, settings, accelerationFilter ?? 'wasm');
+      const result = await runHarnessFixture(
+        page,
+        scenario.fixture,
+        settings,
+        accelerationFilter ?? 'wasm',
+        selectedProfile.id
+      );
       await writeRunArtifacts(result);
       printQualityScores(result);
       printCharacterUtilization(result);
@@ -1117,6 +1293,11 @@ async function main() {
   if (command === 'record') {
     await recordBaselines();
     console.log(`Recorded baselines in ${baselineDir}`);
+    return;
+  }
+
+  if (command === 'capture') {
+    console.log(`Captured harness artifacts in ${latestOutputDir}`);
     return;
   }
 

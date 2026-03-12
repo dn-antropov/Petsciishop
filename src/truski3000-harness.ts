@@ -1,5 +1,6 @@
 import {
   CONVERTER_DEFAULTS,
+  CONVERTER_OBJECTIVE_SIGNATURE,
   buildCharsetConversionContext as buildModeCharsetConversionContext,
   buildPaletteColorsById as buildModePaletteColorsById,
   buildPaletteMetricData as buildModePaletteMetricData,
@@ -8,6 +9,7 @@ import {
   type ConversionOutputs,
   type ConversionResult,
   type ConverterFontBits,
+  type ConverterObjectiveSignature,
   type ConverterSettings,
   type CharsetConversionContext as ModeCharsetConversionContext,
 } from './utils/importers/imageConverter';
@@ -39,16 +41,37 @@ type HarnessRunRequest = {
   fixture: string;
   settings?: Partial<ConverterSettings>;
   accelerationMode?: 'js' | 'wasm';
+  profileId?: string | null;
+};
+
+type HarnessSummarySettings = {
+  brightnessFactor: number;
+  saturationFactor: number;
+  saliencyAlpha: number;
+  lumMatchWeight: number;
+  csfWeight: number;
+  includeTypographic: boolean;
+  accelerationMode: 'js' | 'wasm';
+  paletteId: string;
+  manualBgColor: number | null;
+  outputStandard: boolean;
+  outputEcm: boolean;
+  outputMcm: boolean;
 };
 
 type HarnessModeSummary = {
   mode: HarnessMode;
+  profileId: string | null;
   charset: ConversionResult['charset'];
   backgroundColor: number;
   accelerationMode: NonNullable<HarnessRunRequest['accelerationMode']>;
   accelerationBackend?: ConversionResult['accelerationBackend'];
   conversionMs: number;
   conversionSeconds: number;
+  effectiveSettings: HarnessSummarySettings;
+  settingsFingerprint: string;
+  objectiveSignature: ConverterObjectiveSignature;
+  objectiveFingerprint: string;
   ecmBgColors: number[];
   qualityMeanDeltaE: number;
   qualityPerCellHash: string;
@@ -127,6 +150,23 @@ function buildSettings(overrides: Partial<ConverterSettings> | undefined): Conve
   };
 }
 
+function summarizeSettings(settings: ConverterSettings): HarnessSummarySettings {
+  return {
+    brightnessFactor: settings.brightnessFactor,
+    saturationFactor: settings.saturationFactor,
+    saliencyAlpha: settings.saliencyAlpha,
+    lumMatchWeight: settings.lumMatchWeight,
+    csfWeight: settings.csfWeight,
+    includeTypographic: settings.includeTypographic,
+    accelerationMode: settings.accelerationMode,
+    paletteId: settings.paletteId,
+    manualBgColor: settings.manualBgColor,
+    outputStandard: settings.outputStandard,
+    outputEcm: settings.outputEcm,
+    outputMcm: settings.outputMcm,
+  };
+}
+
 function getRequestedModes(settings: ConverterSettings): HarnessMode[] {
   const modes: HarnessMode[] = [];
   if (settings.outputStandard) modes.push('standard');
@@ -180,22 +220,33 @@ async function summarizeMode(
   preview: ImageData,
   sourceReference: ImageData,
   conversionMs: number,
-  accelerationMode: NonNullable<HarnessRunRequest['accelerationMode']>
+  accelerationMode: NonNullable<HarnessRunRequest['accelerationMode']>,
+  settings: ConverterSettings,
+  profileId: string | null
 ): Promise<{ summary: HarnessModeSummary; previewPngDataUrl: string }> {
   if (!result.qualityMetric || !result.cellMetadata) {
     throw new Error(`Missing Phase 4 diagnostics for ${mode}`);
   }
   const previewPngDataUrl = await imageDataToPngDataUrl(preview);
   const qualityMetrics = computeQualityMetrics(sourceReference, preview);
+  const effectiveSettings = summarizeSettings(settings);
+  const settingsFingerprint = await hashText(JSON.stringify(effectiveSettings));
+  const objectiveSignature = { ...CONVERTER_OBJECTIVE_SIGNATURE };
+  const objectiveFingerprint = await hashText(JSON.stringify(objectiveSignature));
   return {
     summary: {
       mode,
+      profileId,
       charset: result.charset,
       backgroundColor: result.backgroundColor,
       accelerationMode,
       accelerationBackend: result.accelerationBackend,
       conversionMs: Number(conversionMs.toFixed(2)),
       conversionSeconds: Number((conversionMs / 1000).toFixed(3)),
+      effectiveSettings,
+      settingsFingerprint,
+      objectiveSignature,
+      objectiveFingerprint,
       ecmBgColors: [...result.ecmBgColors],
       qualityMeanDeltaE: result.qualityMetric.meanDeltaE,
       qualityPerCellHash: await hashText(JSON.stringify(result.qualityMetric.perCellDeltaE)),
@@ -477,7 +528,11 @@ async function validateKernels(): Promise<HarnessKernelValidationResult> {
 }
 
 async function runFixture(request: HarnessRunRequest): Promise<HarnessRunResult> {
-  const settings = buildSettings(request.settings);
+  const accelerationMode = request.accelerationMode ?? 'wasm';
+  const settings = {
+    ...buildSettings(request.settings),
+    accelerationMode,
+  };
   const requestedModes = getRequestedModes(settings);
   if (requestedModes.length === 0) {
     throw new Error('Harness run requires at least one enabled output mode');
@@ -489,7 +544,6 @@ async function runFixture(request: HarnessRunRequest): Promise<HarnessRunResult>
 
   setStatus(`Converting ${request.fixture}...`);
   const fontBitsByCharset = buildFontBitsByCharset();
-  const accelerationMode = request.accelerationMode ?? 'wasm';
   let outputs!: ConversionOutputs;
   let elapsedMs = 0;
   let lastProgressKey = '';
@@ -556,7 +610,16 @@ async function runFixture(request: HarnessRunRequest): Promise<HarnessRunResult>
   for (const [mode, result, preview] of modeEntries) {
     if (!result || !preview || !sourceReference) continue;
     backendByMode[mode] = result.accelerationBackend;
-    const summarized = await summarizeMode(mode, result, preview, sourceReference, elapsedMs, accelerationMode);
+    const summarized = await summarizeMode(
+      mode,
+      result,
+      preview,
+      sourceReference,
+      elapsedMs,
+      accelerationMode,
+      settings,
+      request.profileId ?? null
+    );
     summaries[mode] = summarized.summary;
     previews[mode] = summarized.previewPngDataUrl;
   }
