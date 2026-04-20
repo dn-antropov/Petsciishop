@@ -29,18 +29,6 @@ import MobileShareViewer from './MobileShareViewer'
 
 import s from './App.module.css'
 
-function MobileWarning() {
-  const [dismissed, setDismissed] = useState(false);
-  if (dismissed) return null;
-  return (
-    <div className={s.mobileWarning}>
-      <img src={import.meta.env.BASE_URL + 'assets/petsciishop_logo.png'} alt='Petsciishop' className={s.mobileLogo} />
-      <h1>Heads up!</h1>
-      <p>Petsciishop is designed for desktop browsers and may not work well on mobile.</p>
-      <button className={s.dismissBtn} onClick={() => setDismissed(true)}>Got it, continue anyway</button>
-    </div>
-  );
-}
 
 function isMobileDevice(): boolean {
   const ua = navigator.userAgent.toLowerCase();
@@ -152,7 +140,6 @@ class AppView extends Component<AppViewProps> {
   render() {
     return (
       <Fragment>
-        <MobileWarning />
         <div className={s.appShell}>
           <MenuBar />
           <FileDrop

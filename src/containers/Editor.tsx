@@ -1214,6 +1214,7 @@ class Editor extends Component<EditorProps & EditorDispatch, EditorState> {
         <div className={styles.editorMainColumn}>
           <ContextMenuArea menuItems={canvasMenuItems}>
             <div
+              id="fb-container"
               className={fbContainerClass}
               style={framebufStyle}>
               {this.props.framebuf ?
@@ -1238,7 +1239,7 @@ class Editor extends Component<EditorProps & EditorDispatch, EditorState> {
             onFileInfo={this.props.framebufIndex !== null ? () => this.props.Toolbar.setShowScreenInfo({ show: true, framebufIndex: this.props.framebufIndex! }) : undefined}
           />
         </div>
-        <div className={styles.editorSidebar}>
+        <div id="cs-container" className={styles.editorSidebar}>
           <div className={styles.editorSidebarTop}>
             <div className={styles.modeBadge}>Mode: {modeLabel}</div>
             <div style={{marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px'}}>

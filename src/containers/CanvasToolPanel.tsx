@@ -17,11 +17,17 @@ interface Props {
   onBezelPreview: () => void;
 }
 
+function scrollTo(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 function CanvasToolPanel({ canvasGridBrightness, setCanvasGridBrightness, onBezelPreview }: Props) {
   const sliderValue = Math.round(canvasGridBrightness * 10);
 
   return (
     <>
+      <button className={s.jumpBtn} onClick={() => scrollTo('fb-container')} title="Jump to canvas">Canvas</button>
+      <button className={s.jumpBtn} onClick={() => scrollTo('cs-container')} title="Jump to charset">Charset</button>
       <label className={s.brightnessLabel}>
         <span className={s.brightnessText}>Grid</span>
         <input
