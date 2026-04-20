@@ -36,6 +36,37 @@
   display: none;
 }
 
+.appShell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.toolpanel {
+  grid-area: toolpanel;
+  background-color: rgb(40, 40, 40);
+  border-bottom: 1px solid rgb(30, 30, 30);
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 4px 10px;
+  gap: 12px;
+}
+
+.appGrid {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+
+  grid-template-columns: 60px auto;
+  grid-template-rows: auto auto 1fr;
+
+  grid-template-areas:
+    "leftmenu topmenu"
+    "leftmenu toolpanel"
+    "leftmenu editor";
+}
+
 @media (max-width: 768px) {
   .mobileWarning {
     display: flex;
@@ -84,35 +115,25 @@
     font-size: 14px;
     cursor: pointer;
   }
-}
 
-.appShell {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-}
+  .appGrid {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto 1fr;
+    grid-template-areas:
+      "leftmenu"
+      "topmenu"
+      "toolpanel"
+      "editor";
+  }
 
-.toolpanel {
-  grid-area: toolpanel;
-  background-color: rgb(40, 40, 40);
-  border-bottom: 1px solid rgb(30, 30, 30);
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  padding: 4px 10px;
-  gap: 12px;
-}
+  .leftmenubar {
+    display: flex;
+    justify-content: center;
+    padding: 4px 0;
+  }
 
-.appGrid {
-  display: grid;
-  flex: 1;
-  min-height: 0;
-
-  grid-template-columns: 60px auto;
-  grid-template-rows: auto auto 1fr;
-
-  grid-template-areas:
-    "leftmenu topmenu"
-    "leftmenu toolpanel"
-    "leftmenu editor";
+  .toolpanel {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
 }
