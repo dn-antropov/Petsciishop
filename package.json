@@ -17,7 +17,7 @@
     "build:truskii-wasm": "node scripts/buildTruskiiWasm.mjs",
     "predev": "npm run build:truskii-wasm",
     "prebuild": "npm run build:truskii-wasm",
-    "dev": "vite",
+    "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview",
     "truski:harness:record": "node scripts/truski3000-harness/run.mjs record",
@@ -42,6 +42,7 @@
     "classnames": "^2.2.6",
     "fast-memoize": "^2.5.1",
     "fflate": "^0.8.2",
+
     "gifenc": "^1.0.1",
     "invariant": "^2.2.4",
     "path-browserify": "^1.0.1",
