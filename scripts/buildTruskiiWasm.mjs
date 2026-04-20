@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
-const ascBinary = resolve(repoRoot, 'node_modules', '.bin', 'asc');
+
 const builds = [
   {
     entryFile: resolve(repoRoot, 'wasm', 'truskiiBinaryKernel.ts'),
@@ -21,12 +21,21 @@ const builds = [
 
 for (const { entryFile, outFile } of builds) {
   await mkdir(dirname(outFile), { recursive: true });
-  await execFileAsync(ascBinary, [
+
+  const args = [
     entryFile,
     '-O3',
     '--noAssert',
     '--runtime', 'stub',
     '--enable', 'simd',
     '--outFile', outFile,
-  ]);
+  ];
+
+  if (process.platform === 'win32') {
+    const ascBinary = resolve(repoRoot, 'node_modules', '.bin', 'asc.cmd');
+    await execFileAsync('cmd.exe', ['/c', ascBinary, ...args]);
+  } else {
+    const ascBinary = resolve(repoRoot, 'node_modules', '.bin', 'asc');
+    await execFileAsync(ascBinary, args);
+  }
 }
