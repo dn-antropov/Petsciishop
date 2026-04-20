@@ -843,11 +843,12 @@ class FramebufferView extends Component<FramebufferViewProps & FramebufferViewDi
 function computeFramebufLayout(args: {
   containerSize: { width: number, height: number },
   framebufSize: { charWidth: number, charHeight: number },
+  portrait?: boolean,
 }) {
   const canvasBorder = 32;
   const statusbarHeight = 28;
   const bottomPad = canvasBorder + statusbarHeight;
-  const rightPad = 320;
+  const rightPad = args.portrait ? 0 : 320;
   const { charWidth, charHeight } = args.framebufSize;
   const maxWidth = args.containerSize.width - rightPad;
   const maxHeight = args.containerSize.height - bottomPad;
@@ -1129,6 +1130,7 @@ class Editor extends Component<EditorProps & EditorDispatch, EditorState> {
 
     const framebufSize = computeFramebufLayout({
       containerSize: this.props.containerSize,
+      portrait: window.innerHeight > window.innerWidth,
       framebufSize: {
         charWidth: this.props.framebuf.width,
         charHeight: this.props.framebuf.height

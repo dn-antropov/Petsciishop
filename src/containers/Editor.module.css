@@ -24,12 +24,32 @@
   margin-right: 16px;
 }
 
+@media (orientation: portrait) {
+  .editorLayoutContainer {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .editorMainColumn {
+    flex-shrink: 0;
+    width: 100%;
+  }
+
+  .editorSidebar {
+    flex: 0 0 auto;
+    min-width: unset;
+    margin-left: 0;
+    margin-right: 0;
+  }
+}
+
 .editorSidebarTop {
   margin-bottom: 10px;
 }
 
 .fbContainer {
   cursor: default;
+  width: 100%
 }
 
 .fbContainer.panzoom {
