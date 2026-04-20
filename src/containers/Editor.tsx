@@ -1185,7 +1185,9 @@ class Editor extends Component<EditorProps & EditorDispatch, EditorState> {
           ? 'brightness(1.4) contrast(1.2) grayscale(1)'
           : undefined,
     };
-    const scaleX = 1.8;
+    const portrait = window.innerHeight > window.innerWidth;
+    // CharSelect grid is 16 chars × 9px each = 144px at scale 1; fill width in portrait
+    const scaleX = portrait ? (this.props.containerSize.width - 16) / 144 : 1.8;
     const scaleY = scaleX;
     const fbContainerClass =
       classNames(
