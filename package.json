@@ -55,6 +55,7 @@
     "redux-undo": "^1.1.0"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.42.2",
     "@types/classnames": "^2.2.6",
     "@types/react": "^18.0.0",
     "@types/react-dom": "^18.0.0",
@@ -64,7 +65,8 @@
     "assemblyscript": "^0.28.9",
     "playwright": "^1.58.2",
     "typescript": "^5.0.0",
-    "vite": "^6.4.3"
+    "vite": "^6.4.3",
+    "wrangler": "^4.104.0"
   },
   "browserslist": [
     ">0.2%",
