@@ -83,8 +83,22 @@ function useCharPos(
     setCharPos(null);
   }, []);
 
+  let charPosFromEvent = useCallback(function(event: MouseEvent): Coord2 | null {
+    if (ref.current == null) {
+      return null;
+    }
+    const bbox = ref.current.getBoundingClientRect();
+    const x = Math.floor((event.clientX - bbox.left)/bbox.width * charWidth);
+    const y = Math.floor((event.clientY - bbox.top)/bbox.height * charHeight);
+    if (x >= 0 && x < charWidth && y >= 0 && y < charHeight) {
+      return {row: y, col: x};
+    }
+    return null;
+  }, [ref, charWidth, charHeight]);
+
   return {
     charPos,
+    charPosFromEvent,
     divProps: {
       ref,
       onMouseMove,
@@ -119,7 +133,7 @@ function CharSelectView(props: {
   const H = props.fb.length;
   const { scaleX, scaleY } = props.canvasScale;
 
-  const { charPos, divProps } = useCharPos(W, H, props.selected);
+  const { charPos, charPosFromEvent, divProps } = useCharPos(W, H, props.selected);
 
   let screencode: number|null = null;
   if (W === 16 && H === 16) {
@@ -136,9 +150,9 @@ function CharSelectView(props: {
     }
   }
 
-  let handleOnClick = useCallback(function() {
-    props.onCharSelected(charPos);
-  }, [charPos]);
+  let handleOnClick = useCallback(function(event: MouseEvent) {
+    props.onCharSelected(charPosFromEvent(event) ?? charPos);
+  }, [charPos, charPosFromEvent, props.onCharSelected]);
 
   const customFonts = Object.entries(props.customFonts).map(([id, { name }]) => {
     return {

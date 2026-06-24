@@ -73,16 +73,35 @@ class DivSize extends Component<DivSizeProps, DivSizeState> {
     })
   }
 
+  measure = () => {
+    const el = this.ref.current;
+    if (!el) {
+      return;
+    }
+    const cs = getComputedStyle(el);
+    const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+    const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    this.setState({
+      containerSize: {
+        width: el.clientWidth - padX,
+        height: el.clientHeight - padY
+      }
+    })
+  }
+
   componentDidMount () {
     if (this.ro && this.ref.current) {
       this.ro.observe(this.ref.current)
     }
+    window.addEventListener('resize', this.measure)
+    this.measure()
   }
 
   componentWillUnmount () {
     if (this.ro && this.ref.current) {
       this.ro.unobserve(this.ref.current);
     }
+    window.removeEventListener('resize', this.measure)
   }
 
 

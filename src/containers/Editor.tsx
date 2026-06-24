@@ -840,6 +840,10 @@ class FramebufferView extends Component<FramebufferViewProps & FramebufferViewDi
   }
 }
 
+function landscapeSidebarWidth(containerWidth: number) {
+  return Math.min(320, Math.max(180, containerWidth * 0.30));
+}
+
 function computeFramebufLayout(args: {
   containerSize: { width: number, height: number },
   framebufSize: { charWidth: number, charHeight: number },
@@ -848,10 +852,10 @@ function computeFramebufLayout(args: {
   const canvasBorder = 32;
   const statusbarHeight = 28;
   const bottomPad = canvasBorder + statusbarHeight;
-  const rightPad = args.portrait ? 0 : 320;
+  const rightPad = args.portrait ? 0 : landscapeSidebarWidth(args.containerSize.width) + 24;
   const { charWidth, charHeight } = args.framebufSize;
-  const maxWidth = args.containerSize.width - rightPad;
-  const maxHeight = args.containerSize.height - bottomPad;
+  const maxWidth = args.containerSize.width - rightPad - canvasBorder;
+  const maxHeight = (args.portrait ? window.innerHeight : args.containerSize.height) - bottomPad;
 
   const canvasWidth = charWidth * 8;
   const canvasHeight = charHeight * 8;
@@ -1130,7 +1134,7 @@ class Editor extends Component<EditorProps & EditorDispatch, EditorState> {
 
     const framebufSize = computeFramebufLayout({
       containerSize: this.props.containerSize,
-      portrait: window.innerHeight > window.innerWidth,
+      portrait: window.innerWidth <= 768,
       framebufSize: {
         charWidth: this.props.framebuf.width,
         charHeight: this.props.framebuf.height
@@ -1185,9 +1189,11 @@ class Editor extends Component<EditorProps & EditorDispatch, EditorState> {
           ? 'brightness(1.4) contrast(1.2) grayscale(1)'
           : undefined,
     };
-    const portrait = window.innerHeight > window.innerWidth;
+    const portrait = window.innerWidth <= 768;
     // CharSelect grid is 16 chars × 9px each = 144px at scale 1; fill width in portrait
-    const scaleX = portrait ? (this.props.containerSize.width - 16) / 144 : 1.8;
+    const scaleX = portrait
+      ? (this.props.containerSize.width - 16) / 144
+      : Math.min(1.8, (landscapeSidebarWidth(this.props.containerSize.width) - 24) / 144);
     const scaleY = scaleX;
     const fbContainerClass =
       classNames(
@@ -1239,7 +1245,11 @@ class Editor extends Component<EditorProps & EditorDispatch, EditorState> {
             onFileInfo={this.props.framebufIndex !== null ? () => this.props.Toolbar.setShowScreenInfo({ show: true, framebufIndex: this.props.framebufIndex! }) : undefined}
           />
         </div>
-        <div id="cs-container" className={styles.editorSidebar}>
+        <div
+          id="cs-container"
+          className={styles.editorSidebar}
+          style={portrait ? undefined : { minWidth: landscapeSidebarWidth(this.props.containerSize.width), flexBasis: landscapeSidebarWidth(this.props.containerSize.width) }}
+        >
           <div className={styles.editorSidebarTop}>
             <div className={styles.modeBadge}>Mode: {modeLabel}</div>
             <div style={{marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px'}}>

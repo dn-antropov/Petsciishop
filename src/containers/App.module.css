@@ -30,6 +30,7 @@
   padding-top: 10px;
   padding-left: 10px;
   overflow-y: hidden;
+  min-width: 0;
 }
 
 .mobileWarning {
@@ -39,7 +40,7 @@
 .appShell {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100dvh;
 }
 
 .toolpanel {
@@ -58,7 +59,7 @@
   flex: 1;
   min-height: 0;
 
-  grid-template-columns: 60px auto;
+  grid-template-columns: 60px minmax(0, 1fr);
   grid-template-rows: auto auto 1fr;
 
   grid-template-areas:
@@ -118,12 +119,22 @@
 
   .appGrid {
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto 1fr;
+    grid-template-rows: auto auto auto auto;
     grid-template-areas:
       "leftmenu"
       "topmenu"
       "toolpanel"
       "editor";
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .editor {
+    overflow-y: visible;
+  }
+
+  .topmenu {
+    overflow: visible;
   }
 
   .leftmenubar {

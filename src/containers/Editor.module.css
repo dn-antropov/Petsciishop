@@ -13,6 +13,7 @@
   flex-direction: column;
   justify-content: flex-start;
   min-height: 0;
+  min-width: 0;
 }
 
 .editorSidebar {
@@ -24,10 +25,11 @@
   margin-right: 16px;
 }
 
-@media (orientation: portrait) {
+@media (max-width: 768px) {
   .editorLayoutContainer {
     flex-direction: column;
-    overflow-y: auto;
+    overflow-y: visible;
+    height: auto;
   }
 
   .editorMainColumn {
